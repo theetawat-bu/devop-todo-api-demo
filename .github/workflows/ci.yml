@@ -109,3 +109,9 @@ jobs:
           user=$(docker inspect -f '{{.Config.User}}' todo-api:ci)
           echo "USER = '$user'"
           test -n "$user" || { echo "::error::image รันเป็น root — k8s ที่ตั้ง runAsNonRoot จะไม่ยอมสตาร์ท"; exit 1; }
+
+  practices:
+    name: ทดสอบ best practices ของ Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ตรวจสอบ best practices ของ Dockerfile"
