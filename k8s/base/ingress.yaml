@@ -1,0 +1,28 @@
+# ต้องติดตั้ง ingress-nginx controller ก่อน:
+#   minikube addons enable ingress
+#   หรือ kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: todo-ingress
+  namespace: todo-app
+  annotations:
+    # rate limit เดียวกับที่ทำใน nginx.conf แต่ทำผ่าน annotation ของ ingress-nginx
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: todo.local # เพิ่มใน /etc/hosts ชี้ไป IP ของ ingress controller
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: todo-api
+                port:
+                  number: 80

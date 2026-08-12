@@ -1,0 +1,23 @@
+# ต้องมี metrics-server ในคลัสเตอร์ก่อน (minikube addons enable metrics-server)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: todo-api-hpa
+  namespace: todo-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: todo-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70 # CPU เกิน 70% ของ request เมื่อไร ให้เพิ่ม pod
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120 # กัน scale ขึ้นลงถี่เกินไป
