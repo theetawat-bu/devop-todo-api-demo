@@ -1,0 +1,116 @@
+name: Kubernetes E2E
+
+# ปั้นคลัสเตอร์ k3d ขึ้นมาสด ๆ ใน runner แล้ว deploy จริง แล้วยิงทดสอบจริง แล้วทิ้ง
+# ได้ฝึก Kubernetes เต็มรูปแบบโดย "ไม่ต้องมี cloud และไม่เสียเงินสักบาท"
+# เป็นด่านที่จับปัญหาที่ kubeconform จับไม่ได้ — เช่น probe ผิด, secret ไม่ถูก mount, migration พัง
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths: ['k8s/**', 'Dockerfile', 'src/**', 'prisma/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: deploy จริงบน k3d แล้วทดสอบ
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---------- สร้างคลัสเตอร์ ----------
+      - name: สร้างคลัสเตอร์ k3d
+        uses: AbsaOSS/k3d-action@v2
+        with:
+          cluster-name: e2e
+          args: >-
+            --agents 1
+            --port 8080:80@loadbalancer
+            --k3s-arg "--disable=traefik@server:0"
+
+      - name: ติดตั้ง ingress-nginx
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+          kubectl -n ingress-nginx wait --for=condition=available deploy/ingress-nginx-controller --timeout=180s
+
+      # ---------- build image เข้าคลัสเตอร์โดยตรง ----------
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: todo-api:e2e
+          cache-from: type=gha
+
+      - name: โหลด image เข้า k3d (ไม่ต้องผ่าน registry)
+        run: k3d image import todo-api:e2e -c e2e
+
+      # ---------- deploy ----------
+      - name: Deploy overlay dev
+        run: |
+          kubectl apply -k k8s/overlays/dev
+          kubectl -n todo-app set image deployment/todo-api api=todo-api:e2e migrate=todo-api:e2e
+          kubectl -n todo-app patch deployment todo-api --type=json \
+            -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"Never"}]'
+
+      - name: รอ Postgres
+        run: kubectl -n todo-app rollout status statefulset/postgres --timeout=180s
+
+      - name: รอ API (ตรงนี้แหละที่ probe และ migration ถูกทดสอบจริง)
+        run: kubectl -n todo-app rollout status deployment/todo-api --timeout=240s
+
+      # ---------- ทดสอบ ----------
+      - name: ทดสอบผ่าน Ingress
+        run: |
+          kubectl -n todo-app port-forward svc/todo-api 18080:80 &
+          sleep 5
+          B=http://localhost:18080
+
+          echo "--- healthz ---"; curl -fsS $B/healthz
+          echo "--- readyz  ---"; curl -fsS $B/readyz
+          echo "--- create  ---"; curl -fsS -X POST $B/api/todos \
+            -H 'Content-Type: application/json' -d '{"title":"e2e"}'
+          echo "--- list    ---"; curl -fsS $B/api/todos | tee /tmp/list.json
+          grep -q '"title":"e2e"' /tmp/list.json || { echo "::error::ไม่เจอ todo ที่เพิ่งสร้าง"; exit 1; }
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/todos \
+            -H 'Content-Type: application/json' -d '{}')
+          test "$code" = "400" || { echo "::error::validation ไม่ทำงาน ได้ $code"; exit 1; }
+
+      - name: ทดสอบ rolling update ว่าไม่มี downtime จริง
+        run: |
+          kubectl -n todo-app port-forward svc/todo-api 18081:80 &
+          sleep 3
+          ( for i in $(seq 1 200); do
+              curl -s -o /dev/null -w "%{http_code}\n" http://localhost:18081/healthz
+              sleep 0.1
+            done > /tmp/codes.txt ) &
+          LOOP=$!
+          sleep 2
+          kubectl -n todo-app rollout restart deployment/todo-api
+          kubectl -n todo-app rollout status deployment/todo-api --timeout=180s
+          wait $LOOP
+          bad=$(grep -vc '^200$' /tmp/codes.txt || true)
+          echo "request ที่ไม่ใช่ 200: $bad"
+          test "$bad" -eq 0 || { echo "::error::เจอ request ที่พลาด $bad ตัวระหว่าง rolling update"; exit 1; }
+
+      # ---------- ถ้าพัง ให้เก็บหลักฐาน ----------
+      - name: เก็บ log ตอนล้มเหลว
+        if: failure()
+        run: |
+          kubectl -n todo-app get all
+          kubectl -n todo-app describe pods
+          kubectl -n todo-app logs -l app=todo-api --all-containers --tail=200 || true
+          kubectl -n todo-app logs -l app=postgres --tail=100 || true
+          kubectl -n todo-app get events --sort-by=.lastTimestamp | tail -40

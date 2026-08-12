@@ -1,22 +1,27 @@
 name: CI
 
-# CI = ตรวจว่าโค้ดที่เข้ามา "ยังใช้ได้" ทุกครั้งที่ push หรือเปิด PR
+# ด่านแรก — ทำงานทุก push และทุก PR
+# ห้ามมีอะไรที่แตะระบบจริงใน workflow นี้เด็ดขาด (ไม่มี push image, ไม่มี deploy)
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
+    paths-ignore: ["**.md", "docs/**", "exercises/**"]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: true # งานอ่านอย่างเดียว ยกเลิกได้ปลอดภัย
 
 jobs:
-  build-and-test:
-    name: Typecheck, build & smoke test
+  # ---------- 1) คุณภาพโค้ด ----------
+  quality:
+    name: Typecheck & test
     runs-on: ubuntu-latest
-
-    # GitHub Actions ปั้น Postgres ให้เป็น service container ได้เลย
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,83 +29,83 @@ jobs:
           POSTGRES_USER: app
           POSTGRES_PASSWORD: app_password
           POSTGRES_DB: tododb
-        ports:
-          - 5432:5432
+        ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U app -d tododb"
           --health-interval 5s
-          --health-timeout 5s
           --health-retries 10
-
     env:
       DATABASE_URL: postgresql://app:app_password@localhost:5432/tododb?schema=public
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npx prisma migrate deploy
 
-      - name: Prisma generate
-        run: npx prisma generate
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
-
-      - name: Run migrations
-        run: npx prisma migrate deploy
-
-      - name: Smoke test (start server & hit endpoints)
+      - name: Smoke test
         run: |
           node dist/index.js &
-          SERVER_PID=$!
-          # รอ server พร้อม
-          for i in $(seq 1 20); do
-            curl -fsS http://localhost:3000/healthz && break
-            sleep 1
-          done
-
-          curl -fsS http://localhost:3000/readyz
-
-          echo "--- create ---"
-          curl -fsS -X POST http://localhost:3000/api/todos \
-            -H 'Content-Type: application/json' \
-            -d '{"title":"from ci"}' | tee /tmp/created.json
-
-          echo "--- list ---"
-          curl -fsS http://localhost:3000/api/todos
-
-          echo "--- validation should return 400 ---"
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:3000/api/todos \
+          for i in $(seq 1 20); do curl -fsS localhost:3000/healthz && break; sleep 1; done
+          curl -fsS localhost:3000/readyz
+          curl -fsS -X POST localhost:3000/api/todos \
+            -H 'Content-Type: application/json' -d '{"title":"from ci"}'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3000/api/todos \
             -H 'Content-Type: application/json' -d '{}')
-          test "$code" = "400" || { echo "expected 400, got $code"; exit 1; }
+          test "$code" = "400" || { echo "คาดหวัง 400 แต่ได้ $code"; exit 1; }
 
-          kill $SERVER_PID
-
-  docker-build:
-    name: Build Docker image (no push)
+  # ---------- 2) manifest ของ Kubernetes ถูกต้องไหม ----------
+  validate-k8s:
+    name: Validate manifests
     runs-on: ubuntu-latest
-    needs: build-and-test
-    # PR แค่ตรวจว่า image build ผ่าน ไม่ต้อง push
-    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: ตรวจว่า kustomize build ผ่านทุก overlay
+        run: |
+          for o in k8s/overlays/*/; do
+            echo "::group::$o"
+            kubectl kustomize "$o" > /dev/null || exit 1
+            echo "::endgroup::"
+          done
 
-      - name: Build image
-        uses: docker/build-push-action@v6
+      # kubeconform ตรวจว่า YAML ตรงกับ schema จริงของ k8s
+      # จับ field พิมพ์ผิดได้ตั้งแต่ยังไม่ apply — ซึ่ง kubectl apply จะปล่อยผ่านเงียบ ๆ
+      - name: kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          for o in k8s/overlays/*/; do
+            kubectl kustomize "$o" | ./kubeconform -strict -summary \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+          done
+
+  # ---------- 3) image build ผ่านไหม (ยังไม่ push) ----------
+  docker:
+    name: Build image (ไม่ push)
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: false
-          tags: devops-todo-api:pr-${{ github.event.pull_request.number }}
+          load: true
+          tags: todo-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: ตรวจว่า image ไม่ได้รันเป็น root
+        run: |
+          user=$(docker inspect -f '{{.Config.User}}' todo-api:ci)
+          echo "USER = '$user'"
+          test -n "$user" || { echo "::error::image รันเป็น root — k8s ที่ตั้ง runAsNonRoot จะไม่ยอมสตาร์ท"; exit 1; }

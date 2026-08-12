@@ -1,0 +1,138 @@
+name: Deploy → Kubernetes (cloud)
+
+# เส้นทาง B: push เข้า main → ขึ้น k3s บน Oracle Cloud Always Free
+# ต่างจาก PaaS ตรงที่เราคุมทุกอย่างเอง — probe, rolling update, rollback, HPA
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'exercises/**']
+  workflow_dispatch:
+    inputs:
+      image-digest:
+        description: 'ระบุ digest เพื่อ deploy ย้อนเวอร์ชัน (เว้นว่าง = build ใหม่)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-k8s
+  cancel-in-progress: false
+
+jobs:
+  # ---------- 1) build (ข้ามได้ถ้าสั่ง deploy ย้อนเวอร์ชัน) ----------
+  build:
+    if: ${{ inputs.image-digest == '' }}
+    uses: ./.github/workflows/build-push.yml
+    with:
+      tag-prefix: main
+      platforms: linux/amd64,linux/arm64 # Oracle free tier เป็น ARM — ขาด arm64 ไม่ได้
+    secrets: inherit
+
+  # ---------- 2) deploy ----------
+  deploy:
+    name: Deploy to k3s
+    needs: [build]
+    if: always() && (needs.build.result == 'success' || inputs.image-digest != '')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: เตรียมชื่อ image
+        id: img
+        run: |
+          REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
+          if [ -n "${{ inputs.image-digest }}" ]; then
+            echo "image=ghcr.io/$REPO@${{ inputs.image-digest }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=${{ needs.build.outputs.image }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- เชื่อมเข้าเครือข่ายส่วนตัวของคลัสเตอร์ ----
+      # แนะนำให้ใช้ Tailscale แทนการเปิด port 6443 ออกอินเทอร์เน็ต (ดู docs/10 หัวข้อความปลอดภัย)
+      - name: เชื่อม Tailscale
+        if: ${{ secrets.TS_OAUTH_CLIENT_ID != '' }}
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - uses: azure/setup-kubectl@v4
+        with: { version: 'v1.31.0' }
+
+      - name: เขียน kubeconfig
+        run: |
+          if [ -z "${{ secrets.KUBE_CONFIG }}" ]; then
+            echo "::error::ยังไม่ได้ตั้ง secret KUBE_CONFIG — ดูวิธีที่ docs/10 Phase 3"
+            exit 1
+          fi
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      # ---- Secret ของฐานข้อมูลสร้างจาก GitHub Secret ไม่ commit ลง git ----
+      - name: สร้าง/อัปเดต Secret
+        run: |
+          kubectl create namespace todo-app --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n todo-app create secret generic todo-secret \
+            --from-literal=DATABASE_URL='${{ secrets.DATABASE_URL }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: ดู diff ก่อน apply
+        run: kubectl diff -k k8s/overlays/cloud || true
+
+      - name: Apply manifests
+        run: kubectl apply -k k8s/overlays/cloud
+
+      - name: อัปเดต image แล้วรอผลจริง
+        id: rollout
+        run: |
+          IMAGE="${{ steps.img.outputs.image }}"
+          echo "deploying $IMAGE"
+          kubectl -n todo-app set image deployment/todo-api api="$IMAGE" migrate="$IMAGE"
+          kubectl -n todo-app annotate deployment/todo-api \
+            kubernetes.io/change-cause="commit ${{ github.sha }} โดย ${{ github.actor }}" --overwrite
+          # บรรทัดนี้คือตัวที่ทำให้ workflow แดงจริงเมื่อ deploy ไม่สำเร็จ
+          kubectl -n todo-app rollout status deployment/todo-api --timeout=300s
+
+      - name: ทดสอบจากภายนอกจริง
+        if: ${{ vars.PROD_URL != '' }}
+        run: |
+          URL="${{ vars.PROD_URL }}"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL/healthz" || echo 000)
+            echo "  ครั้งที่ $i → $code"
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
+          curl -fsS "$URL/readyz"
+          curl -fsS -X POST "$URL/api/todos" \
+            -H 'Content-Type: application/json' -d '{"title":"deployed to k8s"}'
+          curl -fsS "$URL/api/todos"
+
+      - name: ย้อนกลับอัตโนมัติเมื่อล้มเหลว
+        if: failure() && steps.rollout.outcome != 'skipped'
+        run: |
+          echo "::warning::deploy ล้มเหลว — กำลังย้อนกลับ"
+          kubectl -n todo-app rollout undo deployment/todo-api
+          kubectl -n todo-app rollout status deployment/todo-api --timeout=180s
+          kubectl -n todo-app describe pods -l app=todo-api | tail -40
+          echo "::error::deploy ล้มเหลวและย้อนกลับเวอร์ชันก่อนหน้าแล้ว"
+
+      - name: สรุป
+        if: success()
+        run: |
+          {
+            echo "### 🚀 deploy production สำเร็จ"
+            echo "- image: \`${{ steps.img.outputs.image }}\`"
+            echo "- url: ${{ vars.PROD_URL }}"
+            kubectl -n todo-app get deploy,pod,hpa -o wide
+          } >> "$GITHUB_STEP_SUMMARY"

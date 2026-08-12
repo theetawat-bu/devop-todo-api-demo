@@ -1,0 +1,87 @@
+name: Deploy → PaaS (dev)
+
+# เส้นทาง A: push เข้า dev → ขึ้น Render/Koyeb (ฟรี ไม่ต้องดูแลเซิร์ฟเวอร์)
+# ใช้ Docker image ตัวเดียวกับที่ deploy ขึ้น Kubernetes — ต่างกันแค่ปลายทาง
+on:
+  push:
+    branches: [dev]
+    paths-ignore: ['**.md', 'docs/**', 'exercises/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-paas
+  cancel-in-progress: false # งาน deploy ห้ามยกเลิกกลางคัน
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-push.yml
+    with:
+      tag-prefix: dev
+      platforms: linux/amd64 # PaaS ส่วนใหญ่เป็น x86 — build arch เดียวเร็วกว่ามาก
+    secrets: inherit
+
+  deploy:
+    name: สั่ง deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ vars.DEV_URL }}
+    steps:
+      - name: ตรวจว่าตั้ง secret แล้วหรือยัง
+        id: check
+        run: |
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK }}" ]; then
+            echo "provider=render" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ secrets.KOYEB_TOKEN }}" ]; then
+            echo "provider=koyeb" >> "$GITHUB_OUTPUT"
+          else
+            echo "provider=none" >> "$GITHUB_OUTPUT"
+            echo "::warning::ยังไม่ได้ตั้ง RENDER_DEPLOY_HOOK หรือ KOYEB_TOKEN — ข้ามขั้นตอน deploy (ดู docs/10)"
+          fi
+
+      - name: Render
+        if: steps.check.outputs.provider == 'render'
+        run: |
+          echo "deploying ${{ needs.build.outputs.image }}"
+          curl -fsS "${{ secrets.RENDER_DEPLOY_HOOK }}&imgURL=${{ needs.build.outputs.image }}"
+
+      - name: Koyeb
+        if: steps.check.outputs.provider == 'koyeb'
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.KOYEB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://app.koyeb.com/v1/services/${{ secrets.KOYEB_SERVICE_ID }}/redeploy" \
+            -d '{}'
+
+  verify:
+    name: ตรวจปลายทางจริง
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: ${{ vars.DEV_URL != '' }}
+    steps:
+      - name: รอให้บริการตื่นแล้วยิงทดสอบ
+        run: |
+          URL="${{ vars.DEV_URL }}"
+          echo "free tier ต้องปลุกเครื่องก่อน อาจใช้เวลาถึง 2-3 นาที..."
+
+          code=000
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 70 "$URL/healthz" || echo 000)
+            echo "  ครั้งที่ $i → $code"
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          [ "$code" = "200" ] || { echo "::error::healthz ไม่ผ่านหลังรอ 10 นาที"; exit 1; }
+
+          curl -fsS --max-time 60 "$URL/readyz"
+          curl -fsS -X POST "$URL/api/todos" \
+            -H 'Content-Type: application/json' -d '{"title":"deployed from dev"}'
+          curl -fsS "$URL/api/todos"
+
+          echo "### ✅ deploy dev สำเร็จ — $URL" >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 # 07 — CD: Build → Push GHCR → Deploy
 
-ไฟล์: `.github/workflows/cd.yml`
+ไฟล์: `.github/workflows/deploy-k8s.yml` (เดิมชื่อ `cd.yml` — ดูชุด workflow ปัจจุบันที่ [10](10-deploy-free-cloud.md))
 
 ## CI vs CD
 

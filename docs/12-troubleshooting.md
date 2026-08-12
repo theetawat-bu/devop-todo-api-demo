@@ -1,4 +1,4 @@
-# 10 — แก้ปัญหาที่เจอบ่อย
+# 12 — แก้ปัญหาที่เจอบ่อย
 
 ## Node / Prisma
 
@@ -14,6 +14,86 @@
 ยังไม่มี `.env` → `cp .env.example .env`
 บน k8s แปลว่า Secret ไม่ถูก mount ตรวจ `kubectl -n todo-app describe pod <pod>`
 
+**`P3005: The database schema is not empty`** ⭐ เจอบ่อยมากตอนต่อ Neon/Supabase ครั้งแรก
+
+แปลว่า **DB มีตารางอยู่แล้ว แต่ไม่มีตาราง `_prisma_migrations`** → Prisma ไม่รู้ว่าสถานะปัจจุบันคืออะไร เลยไม่กล้าแตะ
+
+สาเหตุที่พบบ่อยเรียงตามความถี่:
+
+1. เคยรัน `prisma db push` มาก่อน (คำสั่งนี้สร้างตารางแต่**ไม่บันทึกประวัติ migration**)
+2. เคยรัน `migrate dev` ด้วย `DATABASE_URL` อื่น แล้วมาเปลี่ยนเป็น Neon ทีหลัง
+3. ใช้ database ที่มีของคนอื่นอยู่แล้ว (เช่น `neondb` ที่ Neon สร้างมาให้พร้อม template)
+
+**ตรวจก่อนว่ามีอะไรอยู่จริง:**
+
+```bash
+npx prisma db pull --print     # พิมพ์ schema ที่อ่านได้จาก DB โดยไม่เขียนทับไฟล์
+```
+
+**ทางเลือกที่ 1 — ข้อมูลทิ้งได้ (โปรเจกต์ฝึกส่วนใหญ่ใช้ทางนี้):**
+
+```bash
+npx prisma migrate reset --force      # ลบทุกอย่างแล้ว apply migration ใหม่ตั้งแต่ต้น
+```
+
+⚠️ **ลบข้อมูลทั้ง database** — ห้ามรันกับ production เด็ดขาด
+ถ้า reset ไม่ผ่านเพราะสิทธิ์ ให้ลบ schema ตรง ๆ แล้ว deploy ใหม่:
+
+```bash
+npx prisma db execute --url "$DATABASE_URL" --stdin <<'SQL'
+DROP SCHEMA public CASCADE;
+CREATE SCHEMA public;
+SQL
+npx prisma migrate deploy
+```
+
+**ทางเลือกที่ 2 — ตารางที่มีอยู่ตรงกับ schema แล้ว (baseline):**
+
+บอก Prisma ว่า "migration นี้ถือว่ารันไปแล้วนะ" โดยไม่ต้องรัน SQL ซ้ำ
+
+```bash
+npx prisma migrate resolve --applied 20260812000000_init
+npx prisma migrate deploy      # ควรได้ "No pending migrations to apply"
+```
+
+คำสั่ง `resolve --applied` จะสร้างตาราง `_prisma_migrations` แล้วบันทึกว่า migration นั้นสำเร็จแล้ว
+**ใช้ได้เฉพาะเมื่อ schema ใน DB ตรงกับ migration จริง ๆ** — ถ้าไม่ตรง จะไปพังตอน migration ถัดไปแทน
+
+**ทางเลือกที่ 3 — schema มีอยู่แต่ไม่ตรงกับ migration:**
+
+สร้าง migration baseline จากสภาพปัจจุบันของ DB แล้ว mark ว่า applied
+
+```bash
+mkdir -p prisma/migrations/0_baseline
+npx prisma migrate diff \
+  --from-empty \
+  --to-schema-datasource prisma/schema.prisma \
+  --script > prisma/migrations/0_baseline/migration.sql
+npx prisma migrate resolve --applied 0_baseline
+```
+
+**วิธีกันไม่ให้เจออีก:** อย่าใช้ `prisma db push` กับ database ที่จะใช้ migration
+`db push` เหมาะกับการทดลองเร็ว ๆ ตอน prototype เท่านั้น — พอตั้งใจจะใช้ migration แล้วต้องใช้ `migrate dev` / `migrate deploy` อย่างเดียว
+
+---
+
+**migrate ค้างนาน / `advisory lock` timeout บน Neon**
+
+สังเกต host ใน error ว่ามี `-pooler` ไหม เช่น `ep-xxx-pooler.ap-southeast-1.aws.neon.tech`
+
+connection แบบ pooled ผ่าน PgBouncer ซึ่ง**ไม่รองรับ advisory lock และ DDL บางอย่าง**ที่ migration ต้องใช้
+Neon ให้ connection string มา 2 แบบ — ให้ใช้ตัวที่**ไม่มี `-pooler`** ตอนรัน migration:
+
+```bash
+# migration ใช้ direct (ไม่มี -pooler)
+DATABASE_URL="postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" \
+  npx prisma migrate deploy
+
+# ส่วนแอปตอนรันจริงใช้ pooled ได้ (รองรับ connection เยอะกว่า)
+```
+
+**สรุปสั้น ๆ: migration → direct / แอป → pooled**
+
 **`P3009: migrate found failed migrations`**
 migration เก่าค้างสถานะ failed → `npx prisma migrate resolve --rolled-back <ชื่อ migration>`
 
@@ -27,16 +107,19 @@ migration เก่าค้างสถานะ failed → `npx prisma migrate
 เช็คว่ามี `.dockerignore` กัน `node_modules` ไว้แล้ว
 
 **`port is already allocated`**
+
 ```bash
 lsof -i :8080          # หาว่าใครใช้อยู่
 docker compose down
 ```
 
 **container ขึ้นแล้วดับทันที**
+
 ```bash
 docker compose logs api          # อ่าน error
 docker compose ps -a             # ดู exit code
 ```
+
 exit 1 = แอปโยน error เอง, exit 137 = โดนฆ่าเพราะ memory เต็ม
 
 **แก้ไฟล์แล้วไม่มีอะไรเปลี่ยน**
@@ -70,10 +153,12 @@ nginx ต่อ upstream ไม่ได้ — เช็คว่า api ขึ
 rate limit เข้มเกิน → เพิ่ม `rate` หรือ `burst` ใน `nginx.conf`
 
 **แก้ config แล้วไม่มีผล**
+
 ```bash
 docker compose exec nginx nginx -t     # ตรวจ syntax ก่อนเสมอ
 docker compose restart nginx
 ```
+
 mount เป็น `:ro` ต้อง restart container ไม่ใช่แค่เซฟไฟล์
 
 **แอปเห็น IP เป็น 172.x ทุก request**
@@ -85,11 +170,13 @@ mount เป็น `:ro` ต้อง restart container ไม่ใช่แค
 ลืม commit `package-lock.json` หรือ dependency ไปอยู่ใน devDependencies
 
 **`denied: permission_denied` ตอน push GHCR**
+
 - ยังไม่ได้ใส่ `permissions: packages: write`
 - Settings → Actions → General → Workflow permissions ยังเป็น read-only
 - ชื่อ image ต้อง **ตัวพิมพ์เล็กทั้งหมด**
 
 **workflow ไม่รันเลย**
+
 - ไฟล์ต้องอยู่ที่ `.github/workflows/*.yml` เป๊ะ ๆ
 - branch ใน `on:` ตรงกับ branch จริงไหม (`main` vs `master`)
 - YAML ผิด indent → GitHub จะขึ้น error ที่แท็บ Actions
@@ -104,24 +191,27 @@ secret ไม่ถูกส่งให้ workflow ที่มาจาก fo
 
 > เริ่มจาก `kubectl -n todo-app describe pod <pod>` แล้วอ่าน **Events** ท้ายสุดเสมอ
 
-| อาการ | สาเหตุที่พบบ่อย | ตรวจยังไง |
-|---|---|---|
-| `ImagePullBackOff` | ชื่อ image ผิด / private ไม่มี imagePullSecret | `describe pod` → Events |
-| `CrashLoopBackOff` | แอปตายซ้ำ ๆ ตอน boot | `logs <pod> --previous` |
-| `Pending` | ทรัพยากรไม่พอ / ไม่มี PV ให้ผูก | `describe pod` → Events |
-| `OOMKilled` | ใช้ memory เกิน `limits` | `describe pod` → Last State |
-| `0/1 Running` ไม่ ready สักที | readinessProbe ไม่ผ่าน | `logs` + ลอง curl endpoint ใน pod |
-| `Init:0/1` ค้าง | initContainer (migration) พัง | `logs <pod> -c migrate` |
+| อาการ                         | สาเหตุที่พบบ่อย                                | ตรวจยังไง                         |
+| ----------------------------- | ---------------------------------------------- | --------------------------------- |
+| `ImagePullBackOff`            | ชื่อ image ผิด / private ไม่มี imagePullSecret | `describe pod` → Events           |
+| `CrashLoopBackOff`            | แอปตายซ้ำ ๆ ตอน boot                           | `logs <pod> --previous`           |
+| `Pending`                     | ทรัพยากรไม่พอ / ไม่มี PV ให้ผูก                | `describe pod` → Events           |
+| `OOMKilled`                   | ใช้ memory เกิน `limits`                       | `describe pod` → Last State       |
+| `0/1 Running` ไม่ ready สักที | readinessProbe ไม่ผ่าน                         | `logs` + ลอง curl endpoint ใน pod |
+| `Init:0/1` ค้าง               | initContainer (migration) พัง                  | `logs <pod> -c migrate`           |
 
 **ดึง image จาก GHCR ที่เป็น private ไม่ได้**
+
 ```bash
 kubectl -n todo-app create secret docker-registry ghcr-secret \
   --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT>
 ```
+
 แล้วเพิ่ม `imagePullSecrets: [{ name: ghcr-secret }]` ใน pod spec
 (หรือง่ายกว่า: ตั้ง package ให้เป็น public ที่หน้า Packages)
 
 **ingress ยิงไม่ได้ 404**
+
 - ติดตั้ง controller แล้วหรือยัง: `kubectl get pods -n ingress-nginx`
 - `ingressClassName: nginx` ตรงกับ controller ไหม
 - ใส่ `/etc/hosts` ชี้ `todo.local` ไป IP ของ ingress แล้วหรือยัง

@@ -1,0 +1,93 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: todo-app
+
+resources:
+  - ../../base
+
+# ─────────────────────────────────────────────────────────────
+# overlay นี้สำหรับ k3s บน Oracle Cloud Always Free
+# ต่างจาก dev/production 3 อย่าง:
+#   1. ไม่รัน Postgres ในคลัสเตอร์ — ใช้ Neon (ประหยัด RAM ของเครื่องฟรี)
+#   2. ไม่ commit Secret — workflow สร้างให้จาก GitHub Secret
+#   3. ใช้ Traefik ที่ k3s ให้มาอยู่แล้ว แทน ingress-nginx
+# ─────────────────────────────────────────────────────────────
+
+patches:
+  # ---- 1) ลบ Postgres ออก (ใช้ Neon แทน) ----
+  - target: { kind: StatefulSet, name: postgres }
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres
+  - target: { kind: Service, name: postgres }
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: postgres
+
+  # ---- 2) ลบ Secret ตัวอย่างออก — ของจริง workflow สร้างให้ ----
+  - target: { kind: Secret, name: todo-secret }
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: todo-secret
+
+  # ---- 3) ปรับให้พอดีกับเครื่องฟรี (2 OCPU / 12 GB) ----
+  - target: { kind: Deployment, name: todo-api }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: 50m, memory: 128Mi }
+          limits:   { cpu: 500m, memory: 256Mi }
+      # Node ไม่รู้จัก container memory limit เอง — ต้องบอกให้ heap เล็กกว่า limit
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NODE_OPTIONS
+          value: "--max-old-space-size=200"
+      # หน่วงก่อนปิด เพื่อให้ Service ถอด pod ออกก่อน — กัน 502 ตอน rolling update
+      - op: add
+        path: /spec/template/spec/containers/0/lifecycle
+        value:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep 5"]
+
+  # ---- 4) k3s มี Traefik มาให้แล้ว ไม่ต้องลง ingress-nginx ----
+  - target: { kind: Ingress, name: todo-ingress }
+    patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: traefik
+      - op: replace
+        path: /spec/rules/0/host
+        value: todo.203.0.113.10.nip.io
+      - op: remove
+        path: /metadata/annotations
+
+  # ---- 5) HPA ให้พอดีกับ node เดียว ----
+  - target: { kind: HorizontalPodAutoscaler, name: todo-api-hpa }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 4
+
+# workflow จะ set image ทับด้วย digest อีกที
+images:
+  - name: ghcr.io/OWNER/REPO
+    newTag: main
