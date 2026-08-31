@@ -22,7 +22,7 @@ jq '.predicate.predicate.packages[].name' sbom.json | head
 2. มีการเชื่อม SBOM → image digest → environment ที่รัน digest นั้นอยู่
 3. มีคนหรือระบบที่รับ CVE feed แล้ว query ได้ภายในเวลาที่กำหนด
 
-**ถ้าตอบว่า "grep ใน package-lock.json" = ยังไม่ผ่าน** เพราะไม่ครอบคลุม dependency ของ OS layer และไม่รู้ว่า image ไหน deploy อยู่จริง
+**ถ้าตอบว่า "grep ใน go.sum" = ยังไม่ผ่าน** เพราะไม่ครอบคลุม dependency ของ OS layer (alpine packages) และไม่รู้ว่า image ไหน deploy อยู่จริง
 
 ---
 
@@ -166,35 +166,35 @@ runbook ที่ไม่เคยซ้อม = นิยายที่เข
 โครง ADR ที่ดี:
 
 ```markdown
-# ADR-005: เลือก base image สำหรับบริการ Node
+# ADR-005: เลือก base image สำหรับบริการ Go
 
 ## สถานะ: ยอมรับแล้ว (2026-08-12)
 
 ## บริบท
-มี 12 บริการที่เป็น Node ใช้ base image ต่างกัน 4 แบบ ทำให้แก้ CVE ต้องทำ 4 ที่
+มี 12 บริการที่เป็น Go ใช้ base image ต่างกัน 4 แบบ ทำให้แก้ CVE ต้องทำ 4 ที่
 
 ## ตัวเลือกที่พิจารณา
 | | ขนาด | CVE (HIGH+) | build | debug | หมายเหตุ |
 |---|---|---|---|---|---|
-| alpine | 180MB | 2 | เร็ว | ดี | musl libc — เคยมีปัญหากับ native module |
-| debian-slim | 250MB | 5 | เร็ว | ดี | glibc มาตรฐาน |
-| distroless | 160MB | 0 | เร็ว | ยาก | ไม่มี shell |
+| alpine | 15MB | 1-2 | เร็ว | ดี | มี shell/apk ให้ debug ได้ |
+| debian-slim | 25MB | 3-5 | เร็ว | ดี | glibc มาตรฐาน แต่ใหญ่กว่าโดยไม่จำเป็นสำหรับ static binary |
+| distroless/static | 3-5MB | 0 | เร็ว | ยาก | ไม่มี shell เลย เหมาะกับ Go binary ที่ `CGO_ENABLED=0` |
 
 ## การตัดสินใจ
-เลือก debian-slim สำหรับทุกบริการ
+เลือก distroless/static สำหรับทุกบริการ
 
 ## เหตุผล
-- ทีมยัง exec เข้า container เฉลี่ย 3 ครั้ง/สัปดาห์ → distroless ยังไม่เหมาะ
-- เคยเจอปัญหา musl กับ native module มาแล้ว 2 ครั้ง เสียเวลารวมกัน 2 วัน
-- ส่วนต่างขนาด 70MB ไม่กระทบเวลา deploy อย่างมีนัยสำคัญ (วัดแล้วต่างกัน 3 วินาที)
+- Go binary ที่ compile ด้วย `CGO_ENABLED=0` ไม่ต้องพึ่ง libc เลย — ไม่มีเหตุผลทาง technical ที่ต้องมี shell หรือ package manager ติดไปด้วย
+- ส่วนต่างขนาดกับ alpine เล็กน้อย (~10MB) แต่ CVE ลดจาก base image เหลือศูนย์เพราะไม่มี OS package ให้สแกนเจอเลย
+- observability ทีมนี้ดีพอแล้ว (structured JSON log ผ่าน stdout + `/healthz`/`/readyz`) ทำให้ไม่ต้อง exec เข้า container บ่อยเหมือนสมัยที่ debug ด้วยการเข้าไปดูไฟล์ log ในเครื่อง
 
 ## ผลที่ตามมา
-- ต้องดูแล base image กลางเอง 1 ตัว
-- CVE 5 รายการที่เพิ่มมาจาก debian ต้องติดตามทุกเดือน
+- debug ต้องพึ่ง `kubectl debug` แนบ ephemeral container แทนการ `exec -it sh` ตรง ๆ — ทีมต้องฝึกใช้เครื่องมือนี้ให้คล่อง
+- migration ต้องแยกออกจาก image หลักไปเป็น initContainer เสมอ (ไม่มี shell ให้รัน `migrate ... && ./api` ต่อกัน)
 
 ## จะทบทวนเมื่อ
-- observability ดีพอจนไม่ต้อง exec เข้า container → พิจารณา distroless อีกครั้ง
-- ขนาด image กลายเป็นคอขวดของเวลา deploy
+- ทีมพบว่าต้อง debug บ่อยจนเป็นคอขวดของงานจริง → พิจารณากลับไปใช้ alpine ชั่วคราวระหว่างสืบสวนปัญหา
+- มี native dependency (cgo) ที่บังคับให้ต้อง `CGO_ENABLED=1` และพึ่ง glibc → ต้องเปลี่ยนไป debian-slim
 ```
 
 **เกณฑ์ผ่าน:** ส่วน "เหตุผล" มี**ตัวเลขที่วัดมาจริง** ไม่ใช่ความเห็น และมีส่วน "จะทบทวนเมื่อ"

@@ -173,7 +173,7 @@ jobs:
 | ส่ง secret ได้ | ✅ | ต้องส่งเป็น input |
 | ซ้อนกันได้ลึกแค่ไหน | 4 ชั้น | ไม่จำกัดในทางปฏิบัติ |
 
-**เลือกยังไง:** ถ้าเป็นชุด step ที่ใช้ซ้ำ (setup node + install) → composite action
+**เลือกยังไง:** ถ้าเป็นชุด step ที่ใช้ซ้ำ (setup go + go mod download) → composite action
 ถ้าเป็นทั้ง job ที่มีตรรกะของตัวเอง (build + push) → reusable workflow
 
 ---
@@ -201,7 +201,7 @@ GitHub เตือนเรื่องนี้ไว้ในเอกสา�
 | ใช้เฉพาะ private repo | ตัดปัญหาที่ต้นเหตุ |
 | **ephemeral runner** (ทำงานเสร็จแล้วทิ้ง) | งานหนึ่งไม่ทิ้งของไว้ให้อีกงานเจอ |
 | network segment แยก | จำกัดความเสียหายถ้าถูกเจาะ |
-| จำกัด egress เฉพาะที่จำเป็น | GitHub, Harbor, npm registry เท่านั้น |
+| จำกัด egress เฉพาะที่จำเป็น | GitHub, Harbor, Go module proxy เท่านั้น |
 | ตั้ง runner group จำกัด repo ที่ใช้ได้ | ไม่ให้ repo อื่นในองค์กรมาใช้มั่ว |
 
 **แนะนำ:** ใช้ Actions Runner Controller (ARC) บน k8s → ได้ ephemeral runner อัตโนมัติและ scale ตามคิวงาน

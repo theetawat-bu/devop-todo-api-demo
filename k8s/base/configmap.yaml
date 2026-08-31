@@ -4,7 +4,6 @@ metadata:
   name: todo-config
   namespace: todo-app
 data:
-  NODE_ENV: "production"
   PORT: "3000"
   POSTGRES_DB: "tododb"
   POSTGRES_USER: "app"

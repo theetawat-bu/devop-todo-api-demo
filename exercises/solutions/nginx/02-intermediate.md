@@ -38,11 +38,11 @@ proxy_pass $upstream_api;                    # ใช้ตัวแปร = res
 
 เพิ่ม endpoint ช้า:
 
-```ts
-app.get("/api/slow", async (_req, res) => {
-  await new Promise((r) => setTimeout(r, 3000));
-  res.json({ ok: true });
-});
+```go
+r.GET("/api/slow", func(c *gin.Context) {
+	time.Sleep(3 * time.Second)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+})
 ```
 
 ยิงผสม:
@@ -134,12 +134,12 @@ docker compose logs api | tail -1
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 ```
 
-```ts
-app.set("trust proxy", true); // ให้ Express อ่านค่าจาก header นี้
+```go
+r.SetTrustedProxies(nil) // ตั้งไว้ใน internal/app/app.go — ให้ Gin อ่านค่าจาก header นี้เมื่อมาจาก proxy ที่เชื่อถือ
 ```
 
-⚠️ **ความปลอดภัย:** `trust proxy: true` แปลว่าเชื่อ header นี้ทั้งหมด ซึ่งผู้ใช้ปลอมได้ถ้ายิงตรงมาที่แอป
-ใน production ที่เข้มงวดควรระบุ IP ของ proxy ที่เชื่อถือแทน เช่น `app.set('trust proxy', '172.20.0.0/16')`
+⚠️ **ความปลอดภัย:** ถ้าตั้ง `SetTrustedProxies(nil)` Gin จะไม่เชื่อ `X-Forwarded-For` เลยและใช้ IP ของ connection จริงแทน (ปลอดภัยแต่ได้ IP ของ nginx เสมอ)
+ถ้าต้องการให้ Gin อ่านค่า `X-Forwarded-For` จริง ๆ ใน production ที่เข้มงวดควรระบุ IP ของ proxy ที่เชื่อถือแทน เช่น `r.SetTrustedProxies([]string{"172.20.0.0/16"})` — ไม่ควรเชื่อ header นี้แบบไม่จำกัดเพราะผู้ใช้ปลอมได้ถ้ายิงตรงมาที่แอป
 
 ---
 
@@ -157,7 +157,7 @@ curl -i -X POST localhost:8080/api/todos \
 
 **ทำไมตัดที่ nginx ดีกว่า:**
 
-| | ตัดที่ nginx | ปล่อยให้ Express รับ |
+| | ตัดที่ nginx | ปล่อยให้ Gin รับ |
 | --- | --- | --- |
 | อ่านข้อมูลเข้ามาเท่าไร | หยุดทันทีที่รู้ว่าเกิน (จาก Content-Length) | ต้องอ่าน body ครบก่อนถึงจะรู้ |
 | หน่วยความจำที่ใช้ | แทบไม่ใช้ | ใช้เต็มขนาด body |

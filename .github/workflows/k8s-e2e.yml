@@ -8,7 +8,7 @@ on:
     branches: [main]
   push:
     branches: [main]
-    paths: ['k8s/**', 'Dockerfile', 'src/**', 'prisma/**']
+    paths: ['k8s/**', 'Dockerfile', 'cmd/**', 'internal/**', 'go.mod', 'go.sum', 'migrations/**']
   workflow_dispatch:
 
 permissions:

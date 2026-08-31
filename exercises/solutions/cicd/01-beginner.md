@@ -25,36 +25,37 @@ git push -u origin main
 
 ```
 ci.yml
-├── job: build-and-test          ← มี services: postgres
-└── job: docker-build            ← needs: build-and-test + if: pull_request
+├── job: quality                 ← มี services: postgres
+├── job: validate-k8s            ← ตรวจ kustomize/kubeconform
+└── job: docker                  ← needs: quality
 ```
 
-| คำถาม | คำตอบ |
-| --- | --- |
-| กี่ job | 2 |
-| ใครรอใคร | `docker-build` รอ `build-and-test` (ผ่าน `needs:`) |
-| `services:` คืออะไร | container ที่ GitHub ปั้นให้ระหว่าง job รัน แล้วดับให้เอง — ในที่นี้คือ Postgres จริง |
-| ทำไมต้อง `actions/checkout` | **runner เริ่มต้นด้วยเครื่องเปล่า ไม่มีโค้ดเราเลย** ต้องดึงลงมาก่อนเสมอ |
+| คำถาม                       | คำตอบ                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| กี่ job                     | 3                                                                                     |
+| ใครรอใคร                    | `docker` รอ `quality` (ผ่าน `needs:`); `validate-k8s` รันอิสระ ไม่รอใคร               |
+| `services:` คืออะไร         | container ที่ GitHub ปั้นให้ระหว่าง job รัน แล้วดับให้เอง — ในที่นี้คือ Postgres จริง |
+| ทำไมต้อง `actions/checkout` | **runner เริ่มต้นด้วยเครื่องเปล่า ไม่มีโค้ดเราเลย** ต้องดึงลงมาก่อนเสมอ               |
 
-`actions/checkout` เป็นข้อผิดพลาดอันดับหนึ่งของคนเริ่มต้น — ลืมใส่แล้วงงว่าทำไม `npm ci` บอกว่าไม่เจอ `package.json`
+`actions/checkout` เป็นข้อผิดพลาดอันดับหนึ่งของคนเริ่มต้น — ลืมใส่แล้วงงว่าทำไม `go build` บอกว่าไม่เจอ `go.mod`
 
 ---
 
 ## C1.3 ทำให้ CI แดง
 
-```ts
-// src/index.ts
-const x: number = "ไม่ใช่ตัวเลข";
+```go
+// cmd/api/main.go
+var x int = "ไม่ใช่ตัวเลข"
 ```
 
 ```
-Run npm run typecheck
-src/index.ts(5,7): error TS2322: Type 'string' is not assignable to type 'number'.
-Error: Process completed with exit code 2
+Run go build -o api ./cmd/api
+./cmd/api/main.go:12:6: cannot use "ไม่ใช่ตัวเลข" (untyped string constant) as int value in variable declaration
+Error: Process completed with exit code 1
 ```
 
 **ทำไม CI ถึงรู้ว่าล้มเหลว:** ทุก step ดูที่ **exit code** ของคำสั่ง — ไม่ใช่ 0 = ล้มเหลว
-`tsc` คืน exit code 2 เมื่อเจอ type error → GitHub จับได้เอง
+`go build` คืน exit code 1 เมื่อ compile ไม่ผ่าน (type error ใน Go เป็น compile error เสมอ ไม่ใช่ step แยกต่างหากแบบ `tsc` ของ TypeScript) → GitHub จับได้เอง
 
 **สิ่งที่ต้องระวัง:** คำสั่งที่พังแต่คืน exit code 0 จะทำให้ CI เขียวหลอก
 เช่น `curl` ที่ไม่ใส่ `-f` จะคืน 0 แม้ได้ 500 — นี่คือเหตุผลที่ smoke test ของเราใช้ `curl -fsS`
@@ -67,15 +68,16 @@ Error: Process completed with exit code 2
 - run: |
     echo "variable: ${{ vars.TEST_VAR }}"
     echo "secret:   ${{ secrets.TEST_SECRET }}"
+
 # variable: hello-world
 # secret:   ***
 ```
 
-| | Secret | Variable |
-| --- | --- | --- |
-| แสดงใน log | `***` | ค่าจริง |
-| อ่านกลับจากหน้าเว็บ | ❌ ไม่ได้เลย | ✅ |
-| ใช้กับ | token, รหัสผ่าน, kubeconfig | URL, ชื่อ environment, feature flag |
+|                     | Secret                      | Variable                            |
+| ------------------- | --------------------------- | ----------------------------------- |
+| แสดงใน log          | `***`                       | ค่าจริง                             |
+| อ่านกลับจากหน้าเว็บ | ❌ ไม่ได้เลย                | ✅                                  |
+| ใช้กับ              | token, รหัสผ่าน, kubeconfig | URL, ชื่อ environment, feature flag |
 
 **ทำไมควรแยกให้ถูก:** ถ้าเอา URL ไปใส่ใน secret ทั้งหมด เวลาอ่าน log จะเห็นแต่ `***` ทำให้ debug ยากมาก
 ใส่ secret เฉพาะสิ่งที่เป็นความลับจริง ๆ
@@ -91,9 +93,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/**"
-      - "package*.json"
-      - "prisma/**"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "migrations/**"
       - "Dockerfile"
       - ".github/workflows/**"
 ```
@@ -143,15 +147,15 @@ on:
 - uses: actions/upload-artifact@v4
   with:
     name: build-output
-    path: dist/
+    path: api
     retention-days: 7
 ```
 
-| | Summary | Artifact |
-| --- | --- | --- |
-| คืออะไร | markdown ที่แสดงบนหน้า run | ไฟล์ให้ดาวน์โหลด |
-| เหมาะกับ | ผลลัพธ์ที่อยากให้เห็นทันที (coverage, ขนาด image, URL) | test report, build output, screenshot |
-| อยู่นานแค่ไหน | ตราบที่ run ยังอยู่ | ตาม `retention-days` (สูงสุด 90 วัน) |
+|               | Summary                                                | Artifact                              |
+| ------------- | ------------------------------------------------------ | ------------------------------------- |
+| คืออะไร       | markdown ที่แสดงบนหน้า run                             | ไฟล์ให้ดาวน์โหลด                      |
+| เหมาะกับ      | ผลลัพธ์ที่อยากให้เห็นทันที (coverage, ขนาด image, URL) | test report, build output, screenshot |
+| อยู่นานแค่ไหน | ตราบที่ run ยังอยู่                                    | ตาม `retention-days` (สูงสุด 90 วัน)  |
 
 **เคล็ดลับ:** ใส่ URL ของ environment ที่ deploy ไปใน summary ทำให้คนที่เปิดดู run กดเข้าไปทดสอบได้ทันที
 เป็นการปรับปรุงเล็ก ๆ ที่ทีมชอบมาก

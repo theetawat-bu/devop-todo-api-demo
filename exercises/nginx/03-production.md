@@ -77,7 +77,7 @@ curl -s -H 'Accept-Encoding: gzip' -o /dev/null -w 'บีบแล้ว: %{siz
 ### N3.8 log ให้พร้อมใช้สอบสวน
 
 **โจทย์:** เพิ่ม `$request_id` เข้า log format และส่งต่อเป็น header ไปให้แอป
-**คำใบ้:** `proxy_set_header X-Request-Id $request_id;` แล้วให้ Express log ค่านี้ด้วย
+**คำใบ้:** `proxy_set_header X-Request-Id $request_id;` แล้วให้ middleware log ของ Gin (`requestLogger()` ใน `internal/app/app.go`) log ค่านี้ด้วย
 **ผ่านเมื่อ:** หา request หนึ่งใน log ของ nginx แล้วตามไปเจอ log เดียวกันฝั่งแอปได้ (นี่คือพื้นฐานของ distributed tracing)
 
 ---

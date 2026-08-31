@@ -1,13 +1,13 @@
 # devops-todo-api
 
-Todo REST API เล็ก ๆ (TypeScript + Express + Prisma + PostgreSQL) ที่ทำขึ้นมาเพื่อ **ฝึก DevOps** โดยเฉพาะ
+Todo REST API เล็ก ๆ (Go + Gin + database/sql + PostgreSQL) ที่ทำขึ้นมาเพื่อ **ฝึก DevOps** โดยเฉพาะ
 ตัวแอปตั้งใจให้ง่ายที่สุด เพื่อให้โฟกัสไปที่ Docker / Nginx / CI/CD / Kubernetes / GitOps ได้เต็มที่
 
 ## Quick start
 
 ```bash
 cp .env.example .env
-npm install
+go mod download
 docker compose up -d --build
 
 curl http://localhost:8080/healthz
@@ -35,8 +35,9 @@ curl http://localhost:8080/api/todos
 
 | # | หัวข้อ | เนื้อหา |
 | --- | --- | --- |
+| 00 | [🗺️ Roadmap การเรียนรู้](docs/00-roadmap.md) | เส้นทางเรียนทั้งหมดตั้งแต่ศูนย์ถึง deploy ฟรี + scale — เริ่มที่นี่ถ้ายังไม่รู้จะเริ่มตรงไหน |
 | 01 | [ภาพรวม & สถาปัตยกรรม](docs/01-overview.md) | โครงสร้างโปรเจกต์, request วิ่งยังไง, roadmap |
-| 02 | [รันในเครื่อง](docs/02-local-development.md) | Node, Prisma, migration, env |
+| 02 | [รันในเครื่อง](docs/02-local-development.md) | Go, golang-migrate, migration, env |
 | 03 | [Docker](docs/03-docker.md) | multi-stage build, layer cache, image เล็กลง, non-root |
 | 04 | [Docker Compose](docs/04-docker-compose.md) | network, volume, healthcheck, depends_on, scale |
 | 05 | [Nginx](docs/05-nginx.md) | reverse proxy, **เปรียบเทียบอัลกอริทึม LB**, rate limit 5 ชั้น, health check |
@@ -73,8 +74,9 @@ curl http://localhost:8080/api/todos
 
 ```
 .
-├── src/                          โค้ด Express + TypeScript
-├── prisma/                       schema + migrations
+├── cmd/api/                      entrypoint (main.go)
+├── internal/                     โค้ด Go (app, config, db, todos)
+├── migrations/                   golang-migrate .up.sql / .down.sql
 ├── nginx/                        config ของ reverse proxy
 ├── k8s/
 │   ├── base/                     manifests หลัก

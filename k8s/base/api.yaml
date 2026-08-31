@@ -26,7 +26,7 @@ spec:
       initContainers:
         - name: migrate
           image: ghcr.io/OWNER/REPO:latest # จะถูก set image ทับโดย CD
-          command: ["sh", "-c", "npx prisma migrate deploy"]
+          command: ["sh", "-c", "migrate -path ./migrations -database \"$DATABASE_URL\" up"]
           env:
             - name: DATABASE_URL
               valueFrom:

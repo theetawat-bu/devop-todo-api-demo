@@ -66,28 +66,31 @@ GitHub ปั้น Postgres จริงขึ้นมาให้ระหว
 ```yaml
 - uses: actions/checkout@v4 # ดึงโค้ดลงมา — ขาดไม่ได้
 
-- uses: actions/setup-node@v4
+- uses: actions/setup-go@v5
   with:
-    node-version: "22"
-    cache: "npm" # cache ~/.npm ตาม hash ของ package-lock.json
+    go-version: "1.25" # cache module ของ Go ให้อัตโนมัติ ไม่ต้องตั้ง cache: เพิ่มเหมือน npm
 
-- run: npm ci # ติดตั้งตาม lockfile เป๊ะ ๆ
-- run: npx prisma generate # ต้องมี ไม่งั้น type ของ prisma ไม่มี
-- run: npm run typecheck # tsc --noEmit
-- run: npm run build
-- run: npx prisma migrate deploy # ทดสอบว่า migration รันผ่านจริง
+- run: go build -o api ./cmd/api # คอมไพล์จริง — ผ่านแปลว่า type ถูกทั้งหมดแล้ว
+- run: go vet ./... # ตรวจเพิ่มเติมที่ compiler ไม่ฟ้อง (เช่น format string ผิด, lock ที่ copy โดยไม่ตั้งใจ)
+- name: Install golang-migrate
+  run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
+- run: migrate -path migrations -database "$DATABASE_URL" up # ทดสอบว่า migration รันผ่านจริง
 ```
 
-`cache: 'npm'` ช่วยลดเวลา install จากหลักนาทีเหลือหลักวินาที
+`actions/setup-go@v5` มี module caching ในตัวอยู่แล้ว (key ตาม hash ของ `go.sum`) — ไม่ต้องตั้ง `cache:` แยกแบบที่ `setup-node` เคยต้องทำ
 
-**pin เวอร์ชันของ action เสมอ** (`@v4` ไม่ใช่ `@main`) เพื่อไม่ให้ pipeline พังเองวันดีคืนดี
+**ทำไมไม่มี step แยกสำหรับ typecheck แบบ `tsc --noEmit` เดิม:** TypeScript เป็นภาษาที่ compile แล้วยังรันเป็น JS ต่อได้แม้ type ผิด (`tsc` แค่เตือน ไม่ได้บล็อกการรัน) เลยต้องมี step ตรวจ type แยกต่างหาก
+Go ตรงข้ามกัน — **`go build` คอมไพล์ไม่ผ่านถ้า type ผิด** สร้าง binary ไม่ได้เลย type-check จึงติดมากับ build ฟรี ไม่ต้องมี step แยก
+`go vet ./...` เป็นชั้นเสริมที่ตรวจสิ่งที่ compile ผ่านได้แต่มีกลิ่นบั๊ก (เช่น `Printf` ที่ argument ไม่ตรง verb)
+
+**pin เวอร์ชันของ action เสมอ** (`@v4`/`@v5` ไม่ใช่ `@main`) เพื่อไม่ให้ pipeline พังเองวันดีคืนดี
 
 ## Smoke test
 
 step สุดท้ายสตาร์ท server จริงแล้วยิง endpoint:
 
 ```bash
-node dist/index.js &
+./api &
 for i in $(seq 1 20); do curl -fsS localhost:3000/healthz && break; sleep 1; done
 curl -fsS localhost:3000/readyz
 curl -fsS -X POST localhost:3000/api/todos -H 'Content-Type: application/json' -d '{"title":"from ci"}'
@@ -95,11 +98,12 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:3000/api/todos -
 test "$code" = "400" || exit 1
 ```
 
+- `./api &` รัน binary ที่ build ไว้ตรง ๆ ในพื้นหลัง (ไม่ต้องมี runtime แยกแบบ `node dist/index.js`)
 - `curl -f` ทำให้ exit code ไม่เป็น 0 เมื่อได้ 4xx/5xx → step ล้มเหลวเอง
 - loop รอ server พร้อม ดีกว่า `sleep 10` แบบสุ่ม
 - เช็ค 400 ด้วย เพราะ "path ที่ควรพัง ต้องพังให้ถูกวิธี" ก็เป็นพฤติกรรมที่ต้องทดสอบ
 
-> smoke test นี้ตั้งใจให้เข้าใจง่าย ของจริงควรอัปเกรดเป็น Jest + Supertest (ดู [แบบฝึกหัด CI/CD](../exercises/cicd/01-beginner.md))
+> smoke test นี้ตั้งใจให้เข้าใจง่าย ของจริงควรอัปเกรดเป็น table-driven test ของ Go เอง (ดู [แบบฝึกหัด CI/CD](../exercises/cicd/01-beginner.md))
 
 ## Job ที่สอง: build image ตอนเปิด PR
 
@@ -490,11 +494,23 @@ echo "::endgroup::"
 
 ```bash
 echo "::error::ข้อความ error"
-echo "::warning file=src/app.ts,line=10::ข้อความเตือน"
+echo "::warning file=internal/app/app.go,line=10::ข้อความเตือน"
 echo "::notice::ข้อความทั่วไป"
 ```
 
 `::error::` ทำให้ข้อความเด่นขึ้นมาบนสุดของหน้า run — ใน `deploy-k8s.yml` เราใช้ตอน rollback เพื่อให้คนเห็นทันทีว่าเกิดอะไร
+
+---
+
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] แก้ `internal/todos/handler.go` ให้มี syntax error ตั้งใจ push/เปิด PR แล้วดูว่า step ไหนของ `quality` job แดง — `go build` จับได้ไหม
+- [ ] ลบ step `go vet ./...` ออกชั่วคราว แล้วใส่โค้ดที่ `go vet` เคยจับได้ (เช่น `fmt.Printf("%d", "text")`) ดูว่า CI เขียวทั้งที่โค้ดมีกลิ่นบั๊ก
+- [ ] เปลี่ยน `test "$code" = "400"` เป็น `"200"` ในสคริปต์ smoke test แล้วดูว่า step ล้มเหลวพร้อมข้อความอะไร
+- [ ] เอา cache ของ `actions/setup-go@v5` ออกไม่ได้ตรง ๆ แต่ลองเทียบเวลา 2 run ติดกัน (run แรก vs run ที่สอง) ว่าต่างกันแค่ไหน
+- [ ] เปิด `ACTIONS_STEP_DEBUG=true` แล้วดู log ละเอียดของ step `Install golang-migrate`
 
 ---
 

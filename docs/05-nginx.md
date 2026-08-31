@@ -49,23 +49,23 @@ upstream api_backend {
 }
 ```
 
-| อัลกอริทึม | วิธีเลือก backend | เหมาะกับ | ข้อควรระวัง |
-| --- | --- | --- | --- |
-| **round-robin** (ค่าเริ่มต้น) | วนไปทีละตัว | REST API ที่ทุก request ใช้เวลาใกล้ ๆ กัน — **เคสส่วนใหญ่ใช้ตัวนี้พอ** | ถ้าบาง request หนักกว่ามาก โหลดจะไม่สมดุล |
-| **`least_conn`** | ตัวที่มี connection ค้างน้อยสุด | request ใช้เวลาต่างกันมาก (อัปโหลดไฟล์, รายงาน, long polling) | ไม่ได้ดูว่า CPU ใครหนัก ดูแค่จำนวน connection |
-| **`ip_hash`** | hash จาก IP ผู้ใช้ | ระบบเก่าที่เก็บ session ไว้ในหน่วยความจำของ instance | ผู้ใช้หลังเน็ตองค์กรจะออก IP เดียวกันหมด → กระจุก และ scale ไม่สวยเพราะเพิ่ม backend ทีเดียว mapping เปลี่ยนเกือบทั้งหมด |
-| **`hash $arg_user_id consistent`** | hash จากค่าที่เราเลือกเอง | cache ที่อยากให้ key เดิมไปเครื่องเดิม | ต้องเลือก key ให้กระจายพอ |
-| **`random two least_conn`** | สุ่มมา 2 ตัว แล้วเลือกตัวที่ว่างกว่า | backend เยอะมาก / มี nginx หลายตัว | ไม่จำเป็นถ้ามี backend แค่ 2-3 ตัว |
+| อัลกอริทึม                         | วิธีเลือก backend                    | เหมาะกับ                                                               | ข้อควรระวัง                                                                                                              |
+| ---------------------------------- | ------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **round-robin** (ค่าเริ่มต้น)      | วนไปทีละตัว                          | REST API ที่ทุก request ใช้เวลาใกล้ ๆ กัน — **เคสส่วนใหญ่ใช้ตัวนี้พอ** | ถ้าบาง request หนักกว่ามาก โหลดจะไม่สมดุล                                                                                |
+| **`least_conn`**                   | ตัวที่มี connection ค้างน้อยสุด      | request ใช้เวลาต่างกันมาก (อัปโหลดไฟล์, รายงาน, long polling)          | ไม่ได้ดูว่า CPU ใครหนัก ดูแค่จำนวน connection                                                                            |
+| **`ip_hash`**                      | hash จาก IP ผู้ใช้                   | ระบบเก่าที่เก็บ session ไว้ในหน่วยความจำของ instance                   | ผู้ใช้หลังเน็ตองค์กรจะออก IP เดียวกันหมด → กระจุก และ scale ไม่สวยเพราะเพิ่ม backend ทีเดียว mapping เปลี่ยนเกือบทั้งหมด |
+| **`hash $arg_user_id consistent`** | hash จากค่าที่เราเลือกเอง            | cache ที่อยากให้ key เดิมไปเครื่องเดิม                                 | ต้องเลือก key ให้กระจายพอ                                                                                                |
+| **`random two least_conn`**        | สุ่มมา 2 ตัว แล้วเลือกตัวที่ว่างกว่า | backend เยอะมาก / มี nginx หลายตัว                                     | ไม่จำเป็นถ้ามี backend แค่ 2-3 ตัว                                                                                       |
 
 **สรุปสั้น ๆ:** เริ่มที่ round-robin เสมอ → ถ้าเห็นว่าโหลดไม่สมดุลจาก log (`urt=` ต่างกันมาก) ค่อยเปลี่ยนเป็น `least_conn`
 ส่วน `ip_hash` ให้มองเป็น "ทางออกสุดท้ายของแอปที่ยังเก็บ session ในเครื่อง" — ทางที่ถูกกว่าคือย้าย session ไป Redis แล้วแอปจะ stateless ทันที
 
 ### Health check ของ Nginx — Passive vs Active
 
-| แบบ | ทำงานยังไง | มีใน | config |
-| --- | --- | --- | --- |
-| **Passive** | ดูจาก request จริงที่ล้มเหลว พังครบ N ครั้ง → พักไว้ชั่วคราว | **NGINX OSS (ที่เราใช้)** | `server api:3000 max_fails=3 fail_timeout=10s;` |
-| **Active** | ยิงเช็ค backend เองเป็นระยะแม้ไม่มี traffic | NGINX Plus (เสียเงิน) เท่านั้น | `health_check interval=5s uri=/healthz;` |
+| แบบ         | ทำงานยังไง                                                   | มีใน                           | config                                          |
+| ----------- | ------------------------------------------------------------ | ------------------------------ | ----------------------------------------------- |
+| **Passive** | ดูจาก request จริงที่ล้มเหลว พังครบ N ครั้ง → พักไว้ชั่วคราว | **NGINX OSS (ที่เราใช้)**      | `server api:3000 max_fails=3 fail_timeout=10s;` |
+| **Active**  | ยิงเช็ค backend เองเป็นระยะแม้ไม่มี traffic                  | NGINX Plus (เสียเงิน) เท่านั้น | `health_check interval=5s uri=/healthz;`        |
 
 nginx ฟรีทำ active health check ไม่ได้ ทางแก้ในทางปฏิบัติคือใช้ passive + `proxy_next_upstream` คู่กัน:
 
@@ -135,13 +135,13 @@ nginx #3 (10r/s) ─┘
 
 ### ตั้ง rate limit ที่ชั้นไหนดี — เปรียบเทียบ
 
-| ชั้น | ตัวอย่าง | นับรวมข้ามเครื่องได้ | แยกตามผู้ใช้/แผนได้ | โหลดถึงแอปก่อนถูกตัดไหม | ความยากในการดูแล |
-| --- | --- | --- | --- | --- | --- |
-| **CDN / WAF** | Cloudflare, AWS WAF | ✅ | ⚠️ ทำได้บ้าง | ❌ ตัดตั้งแต่ขอบสุด (ดีที่สุด) | ต่ำ (แต่มีค่าใช้จ่าย) |
-| **Nginx / Ingress** | `limit_req`, `limit-rps` | ❌ ต่อ replica | ❌ รู้แค่ IP / header ดิบ | ❌ ตัดก่อนถึงแอป | ต่ำ |
-| **API Gateway** | Kong, APISIX, Tyk | ✅ (มี Redis) | ✅ per API key / plan | ❌ ตัดก่อนถึงแอป | กลาง |
-| **Service Mesh** | Istio + Envoy RLS | ✅ | ✅ | ❌ ตัดก่อนถึง pod | สูง |
-| **ในแอป** | `express-rate-limit` + Redis | ✅ (ถ้าใช้ Redis) | ✅ รู้ทุกอย่าง เช่น user id, tier | ✅ **โหลดถึงแอปแล้ว** | ต่ำ แต่แอปรับภาระ |
+| ชั้น                | ตัวอย่าง                     | นับรวมข้ามเครื่องได้ | แยกตามผู้ใช้/แผนได้               | โหลดถึงแอปก่อนถูกตัดไหม        | ความยากในการดูแล      |
+| ------------------- | ---------------------------- | -------------------- | --------------------------------- | ------------------------------ | --------------------- |
+| **CDN / WAF**       | Cloudflare, AWS WAF          | ✅                   | ⚠️ ทำได้บ้าง                      | ❌ ตัดตั้งแต่ขอบสุด (ดีที่สุด) | ต่ำ (แต่มีค่าใช้จ่าย) |
+| **Nginx / Ingress** | `limit_req`, `limit-rps`     | ❌ ต่อ replica       | ❌ รู้แค่ IP / header ดิบ         | ❌ ตัดก่อนถึงแอป               | ต่ำ                   |
+| **API Gateway**     | Kong, APISIX, Tyk            | ✅ (มี Redis)        | ✅ per API key / plan             | ❌ ตัดก่อนถึงแอป               | กลาง                  |
+| **Service Mesh**    | Istio + Envoy RLS            | ✅                   | ✅                                | ❌ ตัดก่อนถึง pod              | สูง                   |
+| **ในแอป**           | rate-limit middleware ระดับแอป (เช่น token bucket ธรรมดา) + Redis | ✅ (ถ้าใช้ Redis)    | ✅ รู้ทุกอย่าง เช่น user id, tier | ✅ **โหลดถึงแอปแล้ว**          | ต่ำ แต่แอปรับภาระ     |
 
 **วิธีที่ทีมส่วนใหญ่ใช้จริงคือทำสองชั้น ไม่ใช่เลือกอย่างเดียว:**
 
@@ -164,10 +164,10 @@ proxy_set_header X-Forwarded-Proto $scheme;
 
 ถ้าไม่ใส่ แอปจะเห็น IP ของ nginx เป็น client ทุก request → log ผิด, rate limit ฝั่งแอปผิด, redirect ผิด protocol
 
-ฝั่ง Express ต้องรับด้วย เราตั้งไว้ใน `src/app.ts`:
+ฝั่ง Gin ต้องรับด้วย เราตั้งไว้ใน `internal/app/app.go`:
 
-```ts
-app.set("trust proxy", true); // ให้ req.ip อ่านจาก X-Forwarded-For
+```go
+r.SetTrustedProxies(nil) // ให้ c.ClientIP() อ่านจาก X-Forwarded-For เมื่ออยู่หลัง Nginx / Ingress
 ```
 
 ## Timeout & failover
@@ -220,21 +220,31 @@ docker compose logs nginx | tail -20
 
 พอขึ้น k8s หลายคนสับสนว่าจะยังเขียน nginx.conf เองไหม ตารางนี้ตอบให้:
 
-| งาน | ทำที่ Nginx (compose/VM) | ทำที่ Kubernetes | ควรเลือกอันไหน |
-| --- | --- | --- | --- |
-| **Load balance** | `upstream` + อัลกอริทึม | Service (L4) หรือ Ingress (L7) | อยู่บน k8s ให้ **Service** ทำ L4 พื้นฐาน แล้วใช้ **Ingress** เมื่อต้องการ L7 (path routing, gRPC, sticky cookie) |
-| **Health check** | passive เท่านั้น (OSS) | liveness / readiness / startup probe | **k8s ชนะขาด** — เป็น active, แยกความหมายชัด, และ "ฆ่า" กับ "ถอดออกจาก pool" แยกกันได้ |
-| **Rate limit** | `limit_req` แม่นระดับ process | annotation ที่ Ingress (ก็คือ nginx ตัวเดียวกัน) | เหมือนกันในทางเทคนิค — ทั้งคู่มีปัญหา "ไม่แชร์ข้าม replica" เท่ากัน |
-| **TLS** | ต่อ cert เอง / certbot | cert-manager ออก + ต่ออายุอัตโนมัติ | **k8s + cert-manager** สบายกว่ามาก |
-| **Auto scale ตามโหลด** | ทำเองไม่ได้ | HPA | **k8s เท่านั้น** |
-| **Retry / failover** | `proxy_next_upstream` | Ingress annotation หรือ Service Mesh | ถ้าต้องการ circuit breaker, outlier detection จริงจัง → Service Mesh |
-| **Routing ตาม path/host** | `location` / `server_name` | Ingress rules / Gateway API | เท่ากัน แต่บน k8s ควรใช้ Ingress เพื่อให้ config เป็น declarative อยู่ใน git |
+| งาน                       | ทำที่ Nginx (compose/VM)      | ทำที่ Kubernetes                                 | ควรเลือกอันไหน                                                                                                   |
+| ------------------------- | ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| **Load balance**          | `upstream` + อัลกอริทึม       | Service (L4) หรือ Ingress (L7)                   | อยู่บน k8s ให้ **Service** ทำ L4 พื้นฐาน แล้วใช้ **Ingress** เมื่อต้องการ L7 (path routing, gRPC, sticky cookie) |
+| **Health check**          | passive เท่านั้น (OSS)        | liveness / readiness / startup probe             | **k8s ชนะขาด** — เป็น active, แยกความหมายชัด, และ "ฆ่า" กับ "ถอดออกจาก pool" แยกกันได้                           |
+| **Rate limit**            | `limit_req` แม่นระดับ process | annotation ที่ Ingress (ก็คือ nginx ตัวเดียวกัน) | เหมือนกันในทางเทคนิค — ทั้งคู่มีปัญหา "ไม่แชร์ข้าม replica" เท่ากัน                                              |
+| **TLS**                   | ต่อ cert เอง / certbot        | cert-manager ออก + ต่ออายุอัตโนมัติ              | **k8s + cert-manager** สบายกว่ามาก                                                                               |
+| **Auto scale ตามโหลด**    | ทำเองไม่ได้                   | HPA                                              | **k8s เท่านั้น**                                                                                                 |
+| **Retry / failover**      | `proxy_next_upstream`         | Ingress annotation หรือ Service Mesh             | ถ้าต้องการ circuit breaker, outlier detection จริงจัง → Service Mesh                                             |
+| **Routing ตาม path/host** | `location` / `server_name`    | Ingress rules / Gateway API                      | เท่ากัน แต่บน k8s ควรใช้ Ingress เพื่อให้ config เป็น declarative อยู่ใน git                                     |
 
 **สรุป:** บน Kubernetes **ไม่ควรยัด nginx container ของตัวเองไว้หน้า Service** (เป็น anti-pattern ที่เจอบ่อย)
 เพราะจะได้ nginx สองชั้นซ้อนกัน — ingress-nginx อยู่แล้วชั้นหนึ่ง ของเราอีกชั้นหนึ่ง = debug ยากขึ้นเท่าตัว, timeout ซ้อนกัน, และ health check ตีกันเอง
 ให้ย้าย config ที่เคยเขียนเองไปเป็น annotation ของ Ingress แทน
 
 ยกเว้นกรณีเดียวที่ยอมรับได้: nginx เป็น **sidecar** ในงานเฉพาะทางจริง ๆ เช่นเสิร์ฟ static file ที่อยู่ใน volume เดียวกับแอป
+
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] ยิง `for i in $(seq 1 60); do curl -s -o /dev/null -w "%{http_code} " http://localhost:8080/api/todos; done` แล้วนับว่า 429 เริ่มโผล่ที่ request ที่เท่าไร ตรงกับ `burst=20` ไหม
+- [ ] ลบ header `X-Forwarded-For` ออกจาก `proxy_set_header` แล้วดู log ของแอป — `c.ClientIP()` เปลี่ยนเป็น IP ของ nginx เองไหม
+- [ ] เปลี่ยน `least_conn` เป็น `ip_hash` แล้วยิงจากเครื่องเดิมหลายรอบ สังเกตว่า request ไปตกที่ backend ตัวเดิมตลอดจริงไหม
+- [ ] ลด `proxy_read_timeout` ให้สั้นลงมาก ๆ (เช่น `1s`) แล้วยิง endpoint ที่ตอบช้า ดูว่า nginx ตัดเมื่อไรและคืน status อะไร
+- [ ] `docker compose exec nginx nginx -t` แล้วลองพิมพ์ syntax error ใน config ดูว่าข้อความ error บอกอะไรบ้าง
 
 ➡️ ต่อไป: [06 — GitHub Actions CI](06-github-actions-ci.md)
 📊 อ่านคู่กัน: [09 — จะตั้ง LB / rate limit / health check ที่ชั้นไหนดี](09-where-to-configure.md)

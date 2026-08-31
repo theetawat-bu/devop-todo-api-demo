@@ -164,4 +164,13 @@ Ingress retry 3 ครั้ง × Mesh retry 3 ครั้ง × App retry 3 �
 - [ ] ทุก container มี `resources.requests` และ `limits`
 - [ ] ทดสอบ rolling update จริงแล้วไม่เจอ 502/503 สักตัว
 
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] เลือก 1 เรื่อง (เช่น rate limit) แล้วไล่ตั้งมันซ้อนกัน 2 ชั้นจริง ๆ (nginx + แอป) ดูว่าพฤติกรรมตรงกับที่ตารางบอกไหม
+- [ ] ตั้ง timeout กลับด้าน (app timeout ยาวกว่า ingress) ตามตัวอย่างในบทนี้ แล้วจำลอง request ที่ค้าง ดูว่าเกิดอาการอะไรจริง ๆ
+- [ ] ปิด `/healthz` ชั่วคราวไม่ให้แยกจาก `/readyz` (ให้เช็ค DB เหมือนกัน) แล้วจำลอง DB ช้า ดูว่าเกิด restart storm ตามที่บทนี้เตือนไหม
+- [ ] ไล่เช็กลิสต์ท้ายบทนี้ทีละข้อกับโปรเจกต์จริงในมือ ข้อไหนยังไม่ผ่านบ้าง
+
 ➡️ เอาไปฝึกต่อ: [แบบฝึกหัดทั้งหมด](../exercises/README.md) — [Docker](../exercises/docker/01-beginner.md) · [Nginx](../exercises/nginx/01-beginner.md) · [Kubernetes](../exercises/kubernetes/01-beginner.md)

@@ -64,9 +64,9 @@ kubectl -n todo-app describe pod <pod> | grep -A5 "Last State"
 **ทำไม memory ต้องฆ่า ไม่ throttle:** CPU แบ่งเวลากันใช้ได้ แต่ memory ที่จองไปแล้วจะคืนไม่ได้
 kernel ไม่มีทางเลือกอื่นนอกจากฆ่า process ที่ขอเกิน
 
-**ข้อควรระวังเฉพาะ Node.js:** heap ของ V8 ไม่รู้จัก container limit โดยอัตโนมัติในบางเวอร์ชัน
-ถ้าตั้ง limit 256Mi แต่ V8 คิดว่ามี RAM ทั้งเครื่องให้ใช้ มันจะปล่อยให้ heap โตจนโดนฆ่า
-ทางแก้: `NODE_OPTIONS=--max-old-space-size=200` (ตั้งประมาณ 75-80% ของ limit)
+**ข้อควรระวังเฉพาะ Go:** Go runtime เองก็ไม่รู้จัก container memory limit โดยอัตโนมัติเช่นกัน (แก้ไขบางส่วนตั้งแต่ Go 1.19 ด้วย `GOMEMLIMIT` แต่ยังไม่ผูกกับ cgroup limit อัตโนมัติ)
+ถ้าตั้ง limit 256Mi แต่ GC ยังคิดว่ามี RAM ทั้งเครื่องให้ใช้ heap อาจโตจนโดนฆ่าก่อนที่ GC จะไล่เก็บทัน
+ทางแก้: ตั้ง `GOMEMLIMIT=200MiB` (ประมาณ 75-80% ของ limit) เพื่อบอก GC ให้ทำงานถี่ขึ้นก่อนถึงเพดานจริง
 
 ---
 
@@ -152,7 +152,7 @@ spec:
       containers:
         - name: migrate
           image: ghcr.io/OWNER/REPO:tag
-          command: ["npx", "prisma", "migrate", "deploy"]
+          command: ["sh", "-c", "migrate -path ./migrations -database \"$DATABASE_URL\" up"]
           env:
             - name: DATABASE_URL
               valueFrom: { secretKeyRef: { name: todo-secret, key: DATABASE_URL } }
@@ -169,7 +169,7 @@ spec:
 | เห็น log แยกไหม | ปนกับ pod | ✅ แยกชัด |
 | ถ้า migration พัง | pod ทุกตัวค้างที่ Init | Job แดง ชัดเจน |
 
-> Prisma มี advisory lock กัน migration ชนกันอยู่แล้ว แต่การพึ่ง lock ของเครื่องมือ ไม่ดีเท่าการออกแบบให้มันรันครั้งเดียวตั้งแต่แรก
+> golang-migrate มี advisory lock (ผ่าน Postgres `pg_advisory_lock`) กัน migration ชนกันอยู่แล้ว แต่การพึ่ง lock ของเครื่องมือ ไม่ดีเท่าการออกแบบให้มันรันครั้งเดียวตั้งแต่แรก
 
 **ทางเลือกที่ดีที่สุด** สำหรับ GitOps คือ Job + `PreSync` hook เพราะ Argo จะรอให้ migration จบก่อนค่อย apply Deployment
 และถ้า migration พัง Deployment จะไม่ถูกแตะเลย — ของเก่ายังรันอยู่ปกติ
@@ -229,7 +229,7 @@ volumes:
     emptyDir: {}
 ```
 
-**ต้องมีทั้งสองฝั่ง:** `USER node` ใน Dockerfile ทำให้ image รันเป็น non-root
+**ต้องมีทั้งสองฝั่ง:** `USER app` ใน Dockerfile (user ที่สร้างเองด้วย `adduser`) ทำให้ image รันเป็น non-root
 ส่วน `runAsNonRoot: true` ใน k8s คือการ**บังคับ** — ถ้า image ดันรันเป็น root pod จะไม่สตาร์ทเลย
 
 **`allowPrivilegeEscalation: false`** กัน setuid binary ยกระดับสิทธิ์ตัวเอง
@@ -281,8 +281,8 @@ t=0    kubectl delete pod
        ├─ [เส้นทาง A] pod ถูกลบออกจาก Endpoints → kube-proxy อัปเดตกฎ (ใช้เวลาเป็นวินาที)
        └─ [เส้นทาง B] kubelet ส่ง SIGTERM ให้ container ทันที
 
-t=0    แอปได้ SIGTERM → server.close() → ไม่รับ connection ใหม่ แต่ทำงานค้างต่อ
-t=5    request เดิมเสร็จ → prisma.$disconnect() → exit(0)
+t=0    แอปได้ SIGTERM → srv.Shutdown(ctx) → ไม่รับ connection ใหม่ แต่ทำงานค้างต่อ
+t=5    request เดิมเสร็จ → ปิด DB pool (pgxpool.Close()) → os.Exit(0)
 t=30   (ถ้ายังไม่ตาย) SIGKILL
 ```
 

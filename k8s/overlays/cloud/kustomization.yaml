@@ -51,12 +51,8 @@ patches:
         value:
           requests: { cpu: 50m, memory: 128Mi }
           limits:   { cpu: 500m, memory: 256Mi }
-      # Node ไม่รู้จัก container memory limit เอง — ต้องบอกให้ heap เล็กกว่า limit
-      - op: add
-        path: /spec/template/spec/containers/0/env/-
-        value:
-          name: NODE_OPTIONS
-          value: "--max-old-space-size=200"
+      # Go ไม่ต้องตั้ง heap limit แบบ Node — GC คุม memory ตาม container limit ได้เอง
+      # (ถ้าอยากบีบเพิ่ม ใช้ GOMEMLIMIT ได้ แต่ปกติไม่จำเป็นสำหรับแอปเล็กขนาดนี้)
       # หน่วงก่อนปิด เพื่อให้ Service ถอด pod ออกก่อน — กัน 502 ตอน rolling update
       - op: add
         path: /spec/template/spec/containers/0/lifecycle

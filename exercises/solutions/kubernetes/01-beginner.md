@@ -146,7 +146,7 @@ kubectl -n todo-app scale deployment/todo-api --replicas=2
 ```bash
 kubectl -n todo-app get configmap todo-config -o yaml
 kubectl -n todo-app get secret todo-secret -o jsonpath='{.data.DATABASE_URL}' | base64 -d
-# postgresql://app:app_password@postgres:5432/tododb?schema=public
+# postgresql://app:app_password@postgres:5432/tododb?sslmode=disable
 ```
 
 **เห็นแล้วใช่ไหมว่าถอดง่ายแค่ไหน** — base64 ไม่ใช่การเข้ารหัส มันคือการเข้ารหัสอักขระเฉย ๆ

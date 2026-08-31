@@ -1,110 +1,89 @@
 # 12 — แก้ปัญหาที่เจอบ่อย
 
-## Node / Prisma
-
-**`@prisma/client did not initialize yet`**
-ยังไม่ได้ generate → `npx prisma generate`
-ถ้าเจอใน Docker แปลว่า Dockerfile ไม่ได้ copy `node_modules/.prisma` มาจาก stage builder
-
-**`Can't reach database server at localhost:5432`**
-ต่อ DB ผิด host — ใน container `localhost` คือตัว container เอง
-ใช้ `db` (compose) หรือ `postgres` (k8s) เป็น hostname
+## Go / Migrations
 
 **`DATABASE_URL is not set`**
 ยังไม่มี `.env` → `cp .env.example .env`
 บน k8s แปลว่า Secret ไม่ถูก mount ตรวจ `kubectl -n todo-app describe pod <pod>`
 
-**`P3005: The database schema is not empty`** ⭐ เจอบ่อยมากตอนต่อ Neon/Supabase ครั้งแรก
+**`Can't reach database server at localhost:5432` / `dial tcp ... connect: connection refused`**
+ต่อ DB ผิด host — ใน container `localhost` คือตัว container เอง
+ใช้ `db` (compose) หรือ `postgres` (k8s) เป็น hostname
 
-แปลว่า **DB มีตารางอยู่แล้ว แต่ไม่มีตาราง `_prisma_migrations`** → Prisma ไม่รู้ว่าสถานะปัจจุบันคืออะไร เลยไม่กล้าแตะ
+**`pq: SSL is not enabled on the server`**
+DSN ไม่ได้ใส่ `?sslmode=disable` ตอนต่อ Postgres ในเครื่อง/compose/k8s (ที่ไม่ได้เปิด TLS)
+ตัวอย่าง: `postgresql://app:app_password@db:5432/tododb?sslmode=disable`
+ส่วน Neon/cloud DB ที่บังคับ TLS ให้ใช้ `?sslmode=require` แทน — เลือกผิดฝั่งแล้วต่อไม่ติดทั้งคู่
 
-สาเหตุที่พบบ่อยเรียงตามความถี่:
+**`Dirty database version N. Fix and force version.`** ⭐ เทียบเท่า Prisma's P3009 (migration ค้างสถานะ failed)
 
-1. เคยรัน `prisma db push` มาก่อน (คำสั่งนี้สร้างตารางแต่**ไม่บันทึกประวัติ migration**)
-2. เคยรัน `migrate dev` ด้วย `DATABASE_URL` อื่น แล้วมาเปลี่ยนเป็น Neon ทีหลัง
-3. ใช้ database ที่มีของคนอื่นอยู่แล้ว (เช่น `neondb` ที่ Neon สร้างมาให้พร้อม template)
-
-**ตรวจก่อนว่ามีอะไรอยู่จริง:**
+`golang-migrate` รัน migration แล้วพังกลางทาง (เช่น ไฟล์ `.sql` ผิด syntax) มันเลย mark เวอร์ชันนั้นว่า **dirty**
+ไม่กล้ารันต่อจนกว่าเราจะยืนยันสถานะจริงของ DB เอง
 
 ```bash
-npx prisma db pull --print     # พิมพ์ schema ที่อ่านได้จาก DB โดยไม่เขียนทับไฟล์
+migrate -path migrations -database "$DATABASE_URL" version   # ดูว่าค้างที่เวอร์ชันไหน
 ```
 
-**ทางเลือกที่ 1 — ข้อมูลทิ้งได้ (โปรเจกต์ฝึกส่วนใหญ่ใช้ทางนี้):**
+ตรวจด้วยตาว่า DB ตอนนี้ตรงกับ migration เวอร์ชันไหนจริง ๆ (เปิด `.sql` ไฟล์นั้นเทียบกับตารางจริงใน DB) แล้ว:
 
 ```bash
-npx prisma migrate reset --force      # ลบทุกอย่างแล้ว apply migration ใหม่ตั้งแต่ต้น
+# ถ้า schema ตรงกับเวอร์ชันนั้นแล้วจริง ๆ (แค่ mark ว่าไม่ dirty ไม่รัน SQL ซ้ำ)
+migrate -path migrations -database "$DATABASE_URL" force N
+
+# แล้วค่อยรันต่อตามปกติ
+migrate -path migrations -database "$DATABASE_URL" up
+```
+
+⚠️ `force` ไม่รัน SQL ใด ๆ แค่เปลี่ยน metadata — ถ้า schema จริงไม่ตรงกับเวอร์ชันที่ force จะพังต่อใน migration ถัดไป
+
+**อยากล้างแล้วเริ่มใหม่ทั้งหมด (โปรเจกต์ฝึกส่วนใหญ่ใช้ทางนี้):**
+
+```bash
+migrate -path migrations -database "$DATABASE_URL" drop -f   # ลบทุกตาราง + version tracking
+migrate -path migrations -database "$DATABASE_URL" up        # apply migration ใหม่ตั้งแต่ต้น
 ```
 
 ⚠️ **ลบข้อมูลทั้ง database** — ห้ามรันกับ production เด็ดขาด
-ถ้า reset ไม่ผ่านเพราะสิทธิ์ ให้ลบ schema ตรง ๆ แล้ว deploy ใหม่:
+
+**DB มีตารางอยู่แล้วจากทางอื่น (ไม่เคยผ่าน golang-migrate มาก่อน) — เทียบเท่า Prisma's P3005**
+
+`golang-migrate` เก็บสถานะไว้ในตาราง `schema_migrations` — ถ้า DB มีตาราง `todos` อยู่แล้วแต่ไม่มีตารางนี้ มันจะพยายาม `CREATE TABLE` ซ้ำแล้ว error ว่ามีอยู่แล้ว
+ถ้ามั่นใจว่า schema ปัจจุบันตรงกับ `migrations/0001_init.up.sql` เป๊ะ ให้ force เวอร์ชันนั้นแทนที่จะรัน `up`:
 
 ```bash
-npx prisma db execute --url "$DATABASE_URL" --stdin <<'SQL'
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
-SQL
-npx prisma migrate deploy
+migrate -path migrations -database "$DATABASE_URL" force 1
 ```
-
-**ทางเลือกที่ 2 — ตารางที่มีอยู่ตรงกับ schema แล้ว (baseline):**
-
-บอก Prisma ว่า "migration นี้ถือว่ารันไปแล้วนะ" โดยไม่ต้องรัน SQL ซ้ำ
-
-```bash
-npx prisma migrate resolve --applied 20260812000000_init
-npx prisma migrate deploy      # ควรได้ "No pending migrations to apply"
-```
-
-คำสั่ง `resolve --applied` จะสร้างตาราง `_prisma_migrations` แล้วบันทึกว่า migration นั้นสำเร็จแล้ว
-**ใช้ได้เฉพาะเมื่อ schema ใน DB ตรงกับ migration จริง ๆ** — ถ้าไม่ตรง จะไปพังตอน migration ถัดไปแทน
-
-**ทางเลือกที่ 3 — schema มีอยู่แต่ไม่ตรงกับ migration:**
-
-สร้าง migration baseline จากสภาพปัจจุบันของ DB แล้ว mark ว่า applied
-
-```bash
-mkdir -p prisma/migrations/0_baseline
-npx prisma migrate diff \
-  --from-empty \
-  --to-schema-datasource prisma/schema.prisma \
-  --script > prisma/migrations/0_baseline/migration.sql
-npx prisma migrate resolve --applied 0_baseline
-```
-
-**วิธีกันไม่ให้เจออีก:** อย่าใช้ `prisma db push` กับ database ที่จะใช้ migration
-`db push` เหมาะกับการทดลองเร็ว ๆ ตอน prototype เท่านั้น — พอตั้งใจจะใช้ migration แล้วต้องใช้ `migrate dev` / `migrate deploy` อย่างเดียว
 
 ---
 
-**migrate ค้างนาน / `advisory lock` timeout บน Neon**
+**migrate ค้างนาน / advisory lock timeout บน Neon**
 
 สังเกต host ใน error ว่ามี `-pooler` ไหม เช่น `ep-xxx-pooler.ap-southeast-1.aws.neon.tech`
 
-connection แบบ pooled ผ่าน PgBouncer ซึ่ง**ไม่รองรับ advisory lock และ DDL บางอย่าง**ที่ migration ต้องใช้
+connection แบบ pooled ผ่าน PgBouncer ซึ่ง**ไม่รองรับ advisory lock และ DDL บางอย่าง**ที่ `golang-migrate` ใช้ล็อกกันรัน migration ซ้ำซ้อน
 Neon ให้ connection string มา 2 แบบ — ให้ใช้ตัวที่**ไม่มี `-pooler`** ตอนรัน migration:
 
 ```bash
 # migration ใช้ direct (ไม่มี -pooler)
-DATABASE_URL="postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" \
-  npx prisma migrate deploy
+migrate -path migrations -database "postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require" up
 
-# ส่วนแอปตอนรันจริงใช้ pooled ได้ (รองรับ connection เยอะกว่า)
+# ส่วนแอปตอนรันจริงใช้ pooled ได้ (รองรับ connection เยอะกว่า) — คนละตัวแปรกับตอน migrate
 ```
 
 **สรุปสั้น ๆ: migration → direct / แอป → pooled**
 
-**`P3009: migrate found failed migrations`**
-migration เก่าค้างสถานะ failed → `npx prisma migrate resolve --rolled-back <ชื่อ migration>`
+**ติดตั้งบนเครื่องแล้ว `migrate: command not found`**
+`go install` ไม่ได้เติม `$GOPATH/bin` เข้า `$PATH` → เช็คด้วย `go env GOPATH` แล้วเติม `export PATH=$PATH:$(go env GOPATH)/bin`
 
-**ติดตั้งบนเครื่องแล้วรันไม่ได้ / binary ผิด platform**
-`rm -rf node_modules package-lock.json && npm install` (เกิดตอนย้าย `node_modules` ข้าม OS)
+**cross-compile แล้วรันไม่ได้ / `exec format error`**
+build บนเครื่องหนึ่ง (เช่น Mac arm64) แล้วเอาไปรันบน server อีก arch (เช่น amd64) โดยไม่ตั้ง `GOOS`/`GOARCH`
+แก้ด้วย `GOOS=linux GOARCH=amd64 go build ./cmd/api` ให้ตรงกับเครื่องปลายทาง (อ่านเพิ่มที่ [03 ภาคลึก](03-docker.md))
 
 ## Docker
 
 **build ช้าทุกครั้ง ไม่ยอม cache**
-เรียงคำสั่งผิด — `COPY package*.json` ต้องมาก่อน `COPY src` ดู [03](03-docker.md)
-เช็คว่ามี `.dockerignore` กัน `node_modules` ไว้แล้ว
+เรียงคำสั่งผิด — `COPY go.mod go.sum` ต้องมาก่อน `COPY cmd`/`COPY internal` ดู [03](03-docker.md)
+เช็คว่ามี `.dockerignore` กัน `.git`, `docs`, `exercises` ไว้แล้ว (ลดขนาด build context)
 
 **`port is already allocated`**
 
@@ -127,7 +106,7 @@ image ยังเป็นตัวเก่า → `docker compose up -d --bui
 ถ้าอยากล้างจริง ๆ: `docker compose build --no-cache`
 
 **`permission denied` ในไฟล์ที่ mount**
-เกิดจาก `USER node` (uid 1000) ไม่มีสิทธิ์ในไฟล์ของ host — dev override ใช้ stage `builder` ที่ยังเป็น root อยู่จึงไม่เจอ
+เกิดจาก non-root user (uid 1000) ไม่มีสิทธิ์ในไฟล์ของ host — dev override ใช้ stage `builder` ที่ยังเป็น root อยู่จึงไม่เจอ
 
 ## Compose
 
@@ -162,12 +141,12 @@ docker compose restart nginx
 mount เป็น `:ro` ต้อง restart container ไม่ใช่แค่เซฟไฟล์
 
 **แอปเห็น IP เป็น 172.x ทุก request**
-ขาด `proxy_set_header X-Forwarded-For` หรือฝั่ง Express ไม่ได้ตั้ง `app.set('trust proxy', true)`
+ขาด `proxy_set_header X-Forwarded-For` หรือฝั่ง Go ไม่ได้ตั้ง `r.SetTrustedProxies(...)` (ดู [05](05-nginx.md))
 
 ## GitHub Actions
 
-**`Error: Cannot find module` ใน CI แต่ในเครื่องปกติ**
-ลืม commit `package-lock.json` หรือ dependency ไปอยู่ใน devDependencies
+**`missing go.sum entry` ใน CI แต่ในเครื่องปกติ**
+ลืม commit `go.sum` หลังเพิ่ม/เปลี่ยน dependency ใหม่ — รัน `go mod tidy` แล้ว commit ทั้ง `go.mod` และ `go.sum`
 
 **`denied: permission_denied` ตอน push GHCR**
 
@@ -182,7 +161,7 @@ mount เป็น `:ro` ต้อง restart container ไม่ใช่แค
 - YAML ผิด indent → GitHub จะขึ้น error ที่แท็บ Actions
 
 **cache ไม่ทำงาน**
-`actions/setup-node` ต้องมี `cache: 'npm'` และต้องมี lockfile อยู่จริง
+`actions/setup-go@v5` cache module ให้อัตโนมัติตาม `go.sum` — เช็คว่ามีไฟล์ `go.sum` อยู่จริงและ commit แล้ว
 
 **secret เป็นค่าว่าง**
 secret ไม่ถูกส่งให้ workflow ที่มาจาก fork PR — เป็นพฤติกรรมด้านความปลอดภัยที่ตั้งใจ
@@ -233,3 +212,13 @@ kubectl -n todo-app create secret docker-registry ghcr-secret \
 3. **เทียบกับที่ที่มันเวิร์ก** — รันในเครื่องได้แต่ใน docker ไม่ได้ = ปัญหาอยู่ที่ environment ไม่ใช่โค้ด
 4. **เปลี่ยนทีละอย่าง** — เปลี่ยนสามที่พร้อมกันแล้วหาย จะไม่รู้ว่าอะไรแก้
 5. **`describe` / `logs` / `exec` คือเพื่อนที่ดีที่สุด**
+
+## 🪛 Playground
+
+ฝึกวินิจฉัยจริง — จงใจทำพังแล้วดูว่าเจออาการตรงตามที่เอกสารบอกไหม:
+
+- [ ] ลบ `DATABASE_URL` ออกจาก `.env` แล้วรัน `docker compose up` — เจอ error ตรงกับที่เขียนไว้ไหม
+- [ ] แก้ DSN ให้ผิด host (เช่น `db2` แทน `db`) แล้วดู error message จริง เทียบกับที่เอกสารบอก
+- [ ] รัน `migrate ... up` สองครั้งติดกันบน DB เดิม — เกิดอะไรขึ้นครั้งที่สอง
+- [ ] ทำให้ migration ไฟล์หนึ่งมี syntax ผิดโดยตั้งใจ แล้วดูสถานะ `dirty` ที่เกิดขึ้นจริง แล้วลองแก้ตามขั้นตอนด้านบน
+- [ ] ลองทุกอาการใน "เทคนิคดีบักทั่วไป" ข้อ 2 (แยกให้แคบลง) กับปัญหาใดก็ได้ที่เจอระหว่างทำ workshop นี้

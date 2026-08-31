@@ -229,20 +229,21 @@ location /api/ {
 }
 ```
 
-ฝั่ง Express:
+ฝั่ง Gin (แก้ `requestLogger()` ใน `internal/app/app.go`):
 
-```ts
-app.use((req, _res, next) => {
-  console.log(
-    JSON.stringify({
-      level: "info",
-      requestId: req.header("x-request-id"),
-      method: req.method,
-      path: req.path,
-    }),
-  );
-  next();
-});
+```go
+func requestLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		entry, _ := json.Marshal(gin.H{
+			"level":     "info",
+			"requestId": c.GetHeader("X-Request-Id"),
+			"method":    c.Request.Method,
+			"path":      c.Request.URL.Path,
+		})
+		log.Println(string(entry))
+	}
+}
 ```
 
 ตามรอย:

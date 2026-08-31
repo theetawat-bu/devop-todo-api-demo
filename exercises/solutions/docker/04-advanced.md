@@ -17,7 +17,7 @@ docker manifest inspect ghcr.io/<you>/todo:multi
 multi-arch ต้องอยู่ในรูป **manifest list** ซึ่งเป็นแนวคิดของ registry — เก็บใน local ไม่ได้
 
 **เกิดอะไรตอน pull:** client ส่ง architecture ของตัวเองไป registry เลือก image ที่ตรงให้อัตโนมัติ
-นี่คือเหตุผลที่ `docker pull node:22-alpine` บน Mac M-series กับบน server Intel ได้คนละ binary แต่ใช้คำสั่งเดียวกัน
+นี่คือเหตุผลที่ `docker pull golang:1.25-alpine` บน Mac M-series กับบน server Intel ได้คนละ binary แต่ใช้คำสั่งเดียวกัน — และ Go เองก็รองรับ cross-compile ในตัวอยู่แล้ว (`GOARCH=arm64 go build`) ทำให้ builder stage ไม่จำเป็นต้องพึ่ง QEMU เสมอไปถ้าตั้งค่า `GOARCH`/`GOOS` ให้ตรงกับ target
 
 ใน workflow:
 
@@ -35,16 +35,18 @@ multi-arch ต้องอยู่ในรูป **manifest list** ซึ่�
 ## D4.2 cache mount
 
 ```dockerfile
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 ```
 
 | | layer cache | cache mount |
 | --- | --- | --- |
 | ทำงานยังไง | ข้าม step ทั้ง step ถ้า input เหมือนเดิม | step ยังรัน แต่มีโฟลเดอร์ที่คงอยู่ข้าม build ให้ใช้ |
-| พอ lockfile เปลี่ยน | **พังทั้ง step** ต้องโหลดใหม่หมด | ยังใช้ของเดิมที่โหลดไว้แล้วได้ ดาวน์โหลดเฉพาะที่เปลี่ยน |
+| พอ `go.sum` เปลี่ยน | **พังทั้ง step** ต้องโหลดใหม่หมด | ยังใช้ module เดิมที่โหลดไว้แล้วได้ ดาวน์โหลดเฉพาะที่เปลี่ยน |
 | อยู่ใน image สุดท้ายไหม | อยู่ (เป็น layer) | **ไม่อยู่** — ไม่ทำให้ image ใหญ่ขึ้น |
 
-ทั้งสองอย่างใช้ร่วมกันได้และควรใช้ร่วมกัน
+Go มี cache 2 ชั้นที่ควร mount แยกกัน: `/go/pkg/mod` (module cache — ตัวไฟล์ dependency ที่โหลดมา) กับ `/root/.cache/go-build` (build cache — ผลคอมไพล์ของแต่ละ package ที่ยังไม่เปลี่ยน) ทั้งสองอย่างใช้ร่วมกันได้และควรใช้ร่วมกัน
 
 ⚠️ ใน GitHub Actions cache mount **ไม่คงอยู่ข้าม run** โดยอัตโนมัติ ต้องใช้ `cache-from/cache-to: type=gha` ช่วย
 
@@ -53,12 +55,14 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 ## D4.3 secret mount
 
 ```dockerfile
-RUN --mount=type=secret,id=npmtoken \
-    NPM_TOKEN=$(cat /run/secrets/npmtoken) npm ci
+RUN --mount=type=secret,id=gh_token \
+    GOPRIVATE=github.com/yourorg/* \
+    git config --global url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf "https://github.com/" && \
+    go mod download
 ```
 
 ```bash
-docker build --secret id=npmtoken,src=./token.txt .
+docker build --secret id=gh_token,src=./token.txt .
 docker history --no-trunc t | grep -i token   # ไม่เจอ
 ```
 
@@ -67,8 +71,8 @@ docker history --no-trunc t | grep -i token   # ไม่เจอ
 เทียบกับวิธีที่**ผิด** 2 แบบ:
 
 ```dockerfile
-ARG NPM_TOKEN          # ❌ ติดใน build history
-ENV NPM_TOKEN=xxx      # ❌ เห็นได้จาก docker inspect ทุกคน
+ARG GH_TOKEN          # ❌ ติดใน build history
+ENV GH_TOKEN=xxx      # ❌ เห็นได้จาก docker inspect ทุกคน
 ```
 
 ใน GitHub Actions:
@@ -77,29 +81,32 @@ ENV NPM_TOKEN=xxx      # ❌ เห็นได้จาก docker inspect ท�
 - uses: docker/build-push-action@v6
   with:
     secrets: |
-      npmtoken=${{ secrets.NPM_TOKEN }}
+      gh_token=${{ secrets.GH_TOKEN }}
 ```
+
+**หมายเหตุ:** โปรเจกต์นี้ไม่มี private module จริง ๆ (dependency ทั้งหมดเป็น public) — ตัวอย่างนี้จำลองสถานการณ์ที่ทีมมี internal Go module อยู่หลังการยืนยันตัวตน ซึ่งเป็นเคสที่พบได้บ่อยในองค์กรที่แยก repo ของ shared library ออกมา
 
 ---
 
 ## D4.4 distroless
 
 ```dockerfile
-FROM gcr.io/distroless/nodejs22-debian12 AS runner
+FROM gcr.io/distroless/static-debian12 AS runner
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
+COPY --from=builder /out/api ./api
 USER nonroot
-CMD ["dist/index.js"]     # ไม่มี "node" นำหน้า — entrypoint ของ image เป็น node อยู่แล้ว
+CMD ["./api"]     # exec form บังคับ — ไม่มี shell ให้ตีความ "sh -c ..."
 ```
 
 **สิ่งที่ต้องเปลี่ยนตาม:**
 
 | เดิม | ทำไมใช้ไม่ได้ | ทางแก้ |
 | --- | --- | --- |
-| `CMD ["sh","-c","prisma migrate deploy && node …"]` | ไม่มี shell | ย้าย migration ไป initContainer / Job |
+| `CMD ["sh","-c","migrate ... && ./api"]` | ไม่มี shell | ย้าย migration ไป initContainer / Job |
 | `HEALTHCHECK CMD curl …` | ไม่มี curl | ใช้ probe ของ k8s แทน |
 | `docker exec -it sh` | ไม่มี shell | ใช้ `kubectl debug` แนบ ephemeral container |
+
+**หมายเหตุ:** ใช้ `static` ไม่ใช่ `base` เพราะ binary compile ด้วย `CGO_ENABLED=0` แล้ว ไม่ผูกกับ glibc เลย — `base` มี glibc/libssl ติดมาซึ่งไม่จำเป็นและเปลืองพื้นที่เปล่า ๆ
 
 **ได้อะไร:** พื้นที่โจมตีเล็กลงมาก — ไม่มี shell, package manager, หรือ utility ให้ผู้โจมตีใช้ต่อ
 **เสียอะไร:** debug ยากขึ้นชัดเจน
@@ -113,14 +120,14 @@ CMD ["dist/index.js"]     # ไม่มี "node" นำหน้า — entryp
 
 ```dockerfile
 # company-base/Dockerfile
-FROM node:22-alpine@sha256:…
+FROM alpine:3.20@sha256:…
 RUN apk add --no-cache curl tini ca-certificates
-RUN addgroup -g 1000 app && adduser -u 1000 -G app -D app
+RUN addgroup -S app && adduser -S -G app -u 1000 app
 ```
 
 ```dockerfile
 # ในโปรเจกต์
-FROM harbor.company.internal/base-images/node:22 AS builder
+FROM harbor.company.internal/base-images/alpine:3.20 AS runner
 ```
 
 **ได้:** มาตรฐานเดียวกันทั้งองค์กร, แก้ CVE ที่เดียวมีผลทุกโปรเจกต์, build เร็วขึ้นเพราะ layer ร่วมกัน
@@ -141,8 +148,8 @@ docker buildx build --output type=image,rewrite-timestamp=true -t t .
 | --- | --- |
 | `FROM` ใช้ tag ไม่ใช่ digest | pin digest |
 | timestamp ของไฟล์ที่ copy | ตั้ง `SOURCE_DATE_EPOCH` |
-| `npm ci` ดึงเวอร์ชันต่างกัน | lockfile + `--ignore-scripts` |
-| build id / uuid ที่ถูกฝังตอน build | ตัดออกหรือทำให้ deterministic |
+| `go build` ฝัง build id/timestamp เองโดยดีฟอลต์ | ใช้ `-trimpath` + `-ldflags="-buildid="` เพื่อตัด path และ build id ที่ไม่ deterministic ออก |
+| module version ต่างกันเพราะ proxy คนละตัว | `go.sum` เป็น lockfile ที่ pin hash อยู่แล้ว +ตั้ง `GOFLAGS=-mod=readonly` |
 
 **ทำไมสำคัญ:** ถ้า build จากโค้ดเดิมแล้วได้ digest เดิม แปลว่า **พิสูจน์ได้ว่า image ที่รันใน production มาจากโค้ดชุดนั้นจริง**
 นี่คือรากฐานของ supply chain security ทั้งหมด
@@ -158,7 +165,7 @@ docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock \
 
 ดูค่า **Wasted Space** — คือไฟล์ที่ถูกเพิ่มใน layer หนึ่งแล้วถูกลบ/ทับใน layer ถัดไป แต่ยังกินที่อยู่
 
-ตัวอย่างที่มักเจอ: npm cache ที่ถูกลบคนละ `RUN` กับตอนสร้าง
+ตัวอย่างที่มักเจอ: ไฟล์ intermediate ที่ถูกลบคนละ `RUN` กับตอนสร้าง (เช่น archive ที่ extract แล้วค่อยลบใน step ถัดไป) — ในโปรเจกต์ Go แบบนี้ปัญหานี้พบน้อยกว่าฝั่ง Node เพราะไม่มี cache directory ขนาดใหญ่ที่ต้องคอยลบทิ้งเอง (module/build cache ควรอยู่ใน `--mount=type=cache` ไม่ใช่ layer อยู่แล้ว)
 
 รันใน CI แบบไม่ interactive:
 
@@ -199,6 +206,6 @@ echo "✅ ผ่านทุกเกณฑ์"
 
 ## 🎯 ต่อยอด
 
-- เทียบขนาด/CVE ระหว่าง alpine / slim / distroless แล้วทำตารางสรุปของตัวเอง
+- เทียบขนาด/CVE ระหว่าง alpine / distroless/static แล้วทำตารางสรุปของตัวเอง
 - ลอง `docker buildx bake` เพื่อ build หลาย target พร้อมกันจากไฟล์เดียว
 - วัดว่า cache mount ประหยัดเวลาได้จริงกี่ % ใน CI ของคุณ

@@ -63,7 +63,7 @@ Docker ระดับ 3-4  ──▶  Nginx ระดับ 3-4  ──▶  Kub
 ```bash
 cd devops-todo-api
 cp .env.example .env
-npm install
+go mod download
 docker compose up -d --build
 curl http://localhost:8080/healthz     # ต้องได้ 200 ก่อนถึงเริ่มฝึกได้
 ```

@@ -16,29 +16,33 @@
 
 ### D4.2 cache mount
 
-**โจทย์:** ทำให้ `npm ci` ใช้ cache ข้าม build ได้แม้ `package-lock.json` เปลี่ยน
+**โจทย์:** ทำให้ `go mod download` / `go build` ใช้ cache ข้าม build ได้แม้ `go.sum` เปลี่ยน
 **คำใบ้:**
 
 ```dockerfile
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 ```
 
-**ผ่านเมื่อ:** แก้ `package.json` (เพิ่ม dependency 1 ตัว) แล้ว build ยังเร็วกว่าเดิมชัดเจน — พร้อมอธิบายความต่างระหว่าง cache mount กับ layer cache
+**ผ่านเมื่อ:** แก้ `go.mod` (เพิ่ม dependency 1 ตัว) แล้ว build ยังเร็วกว่าเดิมชัดเจน — พร้อมอธิบายความต่างระหว่าง cache mount กับ layer cache (สังเกตว่า Go มี 2 cache แยกกัน: module cache กับ build cache)
 
 ---
 
 ### D4.3 secret mount
 
-**โจทย์:** สมมติต้องใช้ token ตอน build (เช่นดึงจาก private registry) ทำยังไงไม่ให้ token ติดใน layer
+**โจทย์:** สมมติต้องใช้ credential ตอน build (เช่น token สำหรับดึง private Go module จาก `GOPRIVATE`) ทำยังไงไม่ให้ token ติดใน layer
 **คำใบ้:**
 
 ```dockerfile
-RUN --mount=type=secret,id=npmtoken \
-    NPM_TOKEN=$(cat /run/secrets/npmtoken) npm ci
+RUN --mount=type=secret,id=gh_token \
+    GOPRIVATE=github.com/yourorg/* \
+    git config --global url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf "https://github.com/" && \
+    go mod download
 ```
 
 ```bash
-docker build --secret id=npmtoken,src=./token.txt .
+docker build --secret id=gh_token,src=./token.txt .
 ```
 
 **ผ่านเมื่อ:** ค้นหา token ใน `docker history --no-trunc` และใน tar ของ `docker save` แล้วไม่เจอ
@@ -47,8 +51,8 @@ docker build --secret id=npmtoken,src=./token.txt .
 
 ### D4.4 distroless
 
-**โจทย์:** เปลี่ยน runtime stage เป็น `gcr.io/distroless/nodejs22-debian12`
-**คำใบ้:** distroless ไม่มี shell → `CMD` ต้องเป็น exec form (`["dist/index.js"]`), HEALTHCHECK ที่ใช้ curl จะใช้ไม่ได้, และ `sh -c "prisma migrate deploy && ..."` ก็รันไม่ได้ → ต้องย้าย migration ไป initContainer
+**โจทย์:** เปลี่ยน runtime stage เป็น `gcr.io/distroless/static-debian12` (Go binary แบบ `CGO_ENABLED=0` ไม่ต้องพก libc เลยด้วยซ้ำ ใช้ `static` ไม่ใช่ `base`)
+**คำใบ้:** distroless ไม่มี shell → `CMD` ต้องเป็น exec form (`["./api"]`), HEALTHCHECK ที่ใช้ curl จะใช้ไม่ได้, และ `sh -c "migrate ... && ./api"` ก็รันไม่ได้ → ต้องย้าย migration ไป initContainer
 **ผ่านเมื่อ:** image เล็กลงชัดเจน แอปยังทำงาน และเขียนสรุปได้ว่า **แลกอะไรไปบ้าง** (debug ยากขึ้นเพราะ exec เข้าไปไม่ได้)
 
 ---

@@ -4,85 +4,102 @@
 
 ---
 
-## C2.1 เทสจริงด้วย Jest + Supertest
+## C2.1 เทสจริงด้วย net/http/httptest
 
 ```bash
-npm i -D jest ts-jest @types/jest supertest @types/supertest
-npx ts-jest config:init
+go test ./... -v
 ```
 
-```js
-// jest.config.js
-module.exports = {
-  preset: "ts-jest",
-  testEnvironment: "node",
-  testMatch: ["**/__tests__/**/*.test.ts"],
-};
+```go
+// internal/todos/handler_test.go
+package todos_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/<you>/devops-todo-api/internal/app"
+)
+
+func setupRouter(t *testing.T) http.Handler {
+	t.Helper()
+	// ต่อ DB ทดสอบจริง (schema เดียวกับที่ migrate up ไว้ใน CI)
+	// แล้ว TRUNCATE todos ก่อนแต่ละเทสเพื่อความสะอาด
+	return app.New(testDB(t))
+}
+
+func TestCreateTodo(t *testing.T) {
+	r := setupRouter(t)
+	body, _ := json.Marshal(map[string]string{"title": "ทดสอบ"})
+	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+}
+
+func TestCreateTodoRejectsEmptyBody(t *testing.T) {
+	r := setupRouter(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetTodoNotFound(t *testing.T) {
+	r := setupRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/todos/999999", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestGetTodoInvalidID(t *testing.T) {
+	r := setupRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/todos/abc", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+// + เทส update (PATCH คืน done:true) และ delete (DELETE คืน 204) ในแพตเทิร์นเดียวกัน
 ```
 
-```ts
-// src/__tests__/todos.test.ts
-import request from "supertest";
-import { createApp } from "../app";
-import { prisma } from "../prisma";
+**ทำไม `app.New(pool)` ถึงถูกแยกออกจาก `.Run()` ตั้งแต่แรก:**
 
-const app = createApp();
-
-beforeEach(async () => {
-  await prisma.todo.deleteMany();
-});
-afterAll(async () => {
-  await prisma.$disconnect();
-});
-
-describe("Todos API", () => {
-  it("สร้าง todo ได้", async () => {
-    const res = await request(app).post("/api/todos").send({ title: "ทดสอบ" });
-    expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ title: "ทดสอบ", done: false });
-  });
-
-  it("ปฏิเสธ body ที่ไม่ถูกต้อง", async () => {
-    const res = await request(app).post("/api/todos").send({});
-    expect(res.status).toBe(400);
-  });
-
-  it("คืน 404 เมื่อไม่เจอ", async () => {
-    expect((await request(app).get("/api/todos/999999")).status).toBe(404);
-  });
-
-  it("คืน 400 เมื่อ id ไม่ใช่ตัวเลข", async () => {
-    expect((await request(app).get("/api/todos/abc")).status).toBe(400);
-  });
-
-  it("แก้ไขได้", async () => {
-    const c = await request(app).post("/api/todos").send({ title: "a" });
-    const res = await request(app).patch(`/api/todos/${c.body.id}`).send({ done: true });
-    expect(res.body.done).toBe(true);
-  });
-
-  it("ลบแล้วคืน 204", async () => {
-    const c = await request(app).post("/api/todos").send({ title: "b" });
-    expect((await request(app).delete(`/api/todos/${c.body.id}`)).status).toBe(204);
-  });
-});
+```go
+func New(pool *pgxpool.Pool) *gin.Engine { ... }   // internal/app/app.go — คืน *gin.Engine
+r := app.New(pool)
+r.Run(":3000")                                       // cmd/api/main.go — เปิด port
 ```
 
-**ทำไม `createApp()` ถึงถูกแยกออกจาก `listen()` ตั้งแต่แรก:**
-
-```ts
-export function createApp() { ... }        // src/app.ts — คืน app object
-const app = createApp();
-app.listen(port)                            // src/index.ts — เปิด port
-```
-
-supertest รับ app object ได้โดยตรง → **ไม่ต้องเปิด port จริง** ทำให้เทสรันขนานกันได้และเร็วกว่ามาก
-ถ้าเขียน `app.listen()` ไว้ในไฟล์เดียวกับ app จะเทสยากมาก — นี่คือตัวอย่างของการออกแบบเพื่อการทดสอบ
+`httptest.NewRecorder()` + `r.ServeHTTP(w, req)` เรียก handler ได้โดยตรง → **ไม่ต้องเปิด port จริง** ทำให้เทสรันขนานกันได้และเร็วกว่ามาก
+ถ้าเขียนการเปิด port ไว้ในฟังก์ชันเดียวกับการสร้าง router จะเทสยากมาก — นี่คือตัวอย่างของการออกแบบเพื่อการทดสอบ เหมือนกับที่ Express แยก `createApp()` จาก `listen()`
 
 ใน CI แทน smoke test เดิม:
 
 ```yaml
-- run: npx jest --coverage
+- run: go test ./... -coverprofile=coverage.out -v
 ```
 
 ---
@@ -95,13 +112,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22", cache: "npm" }
-      - run: npm ci
-      - run: npx eslint src --max-warnings=0
-      - run: npx prettier --check "src/**/*.ts"
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+      - name: gofmt check
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [ -n "$fmt_out" ]; then
+            echo "::error::ไฟล์ต่อไปนี้ยังไม่ผ่าน gofmt: $fmt_out"
+            exit 1
+          fi
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
 
-  build-and-test:
+  quality:
     runs-on: ubuntu-latest
     # ไม่ใส่ needs: → รันขนานกับ lint
 ```
@@ -109,7 +134,8 @@ jobs:
 **ทำไมไม่ใส่ `needs`:** job ที่ไม่มี `needs` จะเริ่มพร้อมกันทั้งหมด
 เวลารวมของ workflow = เวลาของ job ที่ช้าที่สุด ไม่ใช่ผลรวม
 
-**`--max-warnings=0`** สำคัญ — ไม่งั้น warning จะสะสมไปเรื่อย ๆ จนไม่มีใครอ่าน
+**`gofmt -l .`** คือฝั่ง Go ของ `prettier --check` — list ไฟล์ที่ format ไม่ตรงมาตรฐานโดยไม่แก้ให้ (ต้องรัน `gofmt -w` เองถ้าจะแก้)
+**`golangci-lint`** คือฝั่ง Go ของ ESLint — รวม linter หลายตัว (`govet`, `staticcheck`, `errcheck`, `unused` ฯลฯ) ไว้ในคำสั่งเดียว ตั้ง exit code ไม่เป็น 0 เมื่อเจอปัญหาอยู่แล้วโดยไม่ต้องมี flag แยกแบบ `--max-warnings=0`
 
 ---
 
@@ -119,20 +145,20 @@ jobs:
 strategy:
   fail-fast: false
   matrix:
-    node: [20, 22]
+    go: ["1.24", "1.25"]
 steps:
-  - uses: actions/setup-node@v4
-    with: { node-version: ${{ matrix.node }} }
+  - uses: actions/setup-go@v5
+    with: { go-version: ${{ matrix.go }} }
 ```
 
-**`fail-fast: false`** = ถ้า Node 20 พัง ให้ Node 22 รันต่อจนจบ
+**`fail-fast: false`** = ถ้า Go 1.24 พัง ให้ Go 1.25 รันต่อจนจบ
 ค่าเริ่มต้นคือ `true` ซึ่งจะยกเลิกทั้งหมดทันที — ทำให้ไม่รู้ว่าพังเฉพาะเวอร์ชันเดียวหรือพังทั้งคู่ (ข้อมูลนี้สำคัญมากในการวินิจฉัย)
 
 **จำนวน job จะคูณกัน:**
 
 ```yaml
 matrix:
-  node: [20, 22] # 2
+  go: ["1.24", "1.25"] # 2
   os: [ubuntu-latest, macos-latest] # × 2
 # = 4 job
 ```
@@ -146,7 +172,7 @@ matrix:
 Settings → Branches → Add rule สำหรับ `main`:
 
 - ✅ Require a pull request before merging
-- ✅ Require status checks to pass → เลือก `build-and-test` และ `lint`
+- ✅ Require status checks to pass → เลือก `quality` และ `lint`
 - ✅ Require branches to be up to date before merging
 - ✅ Do not allow bypassing the above settings ← **สำคัญ** ไม่งั้น admin ข้ามได้
 
@@ -163,7 +189,7 @@ Settings → Branches → Add rule สำหรับ `main`:
 
 | วิธี | ผลที่มักได้ |
 | --- | --- |
-| `cache: 'npm'` ใน setup-node | 30-60 วินาที |
+| module cache ของ `actions/setup-go@v5` (เปิดอยู่แล้วโดยดีฟอลต์) | 20-40 วินาที |
 | docker layer cache (`type=gha`) | 1-3 นาที |
 | ลบ step ที่ซ้ำระหว่าง job | ตามที่ซ้ำ |
 | `paths` filter | ประหยัดทั้ง run |
@@ -172,7 +198,7 @@ Settings → Branches → Add rule สำหรับ `main`:
 **สำคัญกว่าทุกวิธี: ต้องรู้ก่อนว่าเวลาหมดไปกับ step ไหน**
 GitHub แสดงเวลาของแต่ละ step อยู่แล้ว — กดดูก่อนแล้วค่อยจูนตรงที่ช้าที่สุด
 
-**สิ่งที่มักถูกมองข้าม:** `npm ci` ใน 3 job = ดาวน์โหลด 3 ครั้ง
+**สิ่งที่มักถูกมองข้าม:** `go build`/`go mod download` ใน 3 job = ดาวน์โหลด module 3 ครั้ง
 ถ้าแคชแล้วยังช้า พิจารณา build ครั้งเดียวแล้วส่งผ่าน artifact ให้ job อื่น
 
 ---
@@ -205,21 +231,22 @@ push 3 ครั้งติด → run ที่ 1 และ 2 ถูกยก�
 ## C2.7 coverage report
 
 ```yaml
-- run: npx jest --coverage --coverageReporters=text-summary --coverageReporters=html
+- run: go test ./... -coverprofile=coverage.out
+- run: go tool cover -html=coverage.out -o coverage.html
 
 - name: เขียน coverage ลงสรุป
   if: always()
   run: |
     echo "### Coverage" >> $GITHUB_STEP_SUMMARY
     echo '```' >> $GITHUB_STEP_SUMMARY
-    npx jest --coverage --coverageReporters=text-summary 2>&1 | tail -10 >> $GITHUB_STEP_SUMMARY
+    go tool cover -func=coverage.out | tail -10 >> $GITHUB_STEP_SUMMARY
     echo '```' >> $GITHUB_STEP_SUMMARY
 
 - uses: actions/upload-artifact@v4
   if: always()
   with:
     name: coverage-html
-    path: coverage/
+    path: coverage.html
 ```
 
 **`if: always()`** จำเป็น — ถ้าไม่ใส่ พอเทสพัง step นี้จะถูกข้าม
@@ -233,6 +260,6 @@ push 3 ครั้งติด → run ที่ 1 และ 2 ถูกยก�
 
 ## 🎯 ต่อยอด
 
-- ลอง `jest --changedSince=main` ให้รันเฉพาะเทสที่เกี่ยวกับไฟล์ที่แก้
-- เพิ่ม `--runInBand` ถ้าเทสแย่ง DB กัน หรือดีกว่านั้นคือให้แต่ละ worker ใช้ schema แยกกัน
-- ลองใช้ testcontainers เพื่อให้เทสปั้น Postgres เองโดยไม่ต้องพึ่ง service container
+- ลอง `go test ./... -run TestCreateTodo` ให้รันเฉพาะเทสที่ระบุชื่อ
+- เพิ่ม `-p 1` ถ้าเทสแย่ง DB กัน หรือดีกว่านั้นคือให้แต่ละ package ใช้ schema แยกกัน
+- ลองใช้ [testcontainers-go](https://golang.testcontainers.org/) เพื่อให้เทสปั้น Postgres เองโดยไม่ต้องพึ่ง service container

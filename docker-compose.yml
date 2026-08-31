@@ -30,10 +30,9 @@ services:
     image: ${IMAGE:-devops-todo-api:local}
     restart: unless-stopped
     environment:
-      NODE_ENV: production
       PORT: 3000
       APP_VERSION: ${APP_VERSION:-dev}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app_password}@db:5432/${POSTGRES_DB:-tododb}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app_password}@db:5432/${POSTGRES_DB:-tododb}?sslmode=disable
     depends_on:
       db:
         condition: service_healthy

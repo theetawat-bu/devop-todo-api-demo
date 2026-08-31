@@ -15,15 +15,15 @@ curl → localhost:8080
      → proxy_pass http://api_backend
      → upstream api_backend { server api:3000; }
      → Docker DNS แปลง "api" เป็น IP ของ container
-     → Express app port 3000
-     → todosRouter → prisma → postgres
+     → Gin app port 3000
+     → internal/todos handler → pgx → postgres
 ```
 
 ยืนยันด้วยตัวเอง:
 
 ```bash
 docker compose logs nginx | tail -1     # เห็น upstream=172.x.x.x:3000
-docker compose logs api  | tail -1      # เห็น log ของ Express request เดียวกัน
+docker compose logs api  | tail -1      # เห็น log ของ Gin request เดียวกัน (JSON structured log)
 ```
 
 ---

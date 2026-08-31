@@ -5,6 +5,21 @@
 
 ---
 
+> ### ❓ Harbor จำเป็นไหม
+>
+> **ไม่จำเป็น** — สำหรับเส้นทาง free-tier ที่สอนใน [doc 07](07-cd-ghcr.md) และ [doc 10](10-deploy-free-cloud.md) ของ curriculum นี้ ใช้ **GHCR (GitHub Container Registry)** ก็พอแล้ว และฟรีสำหรับโปรเจกต์ส่วนตัว/ทีมเล็ก
+>
+> Harbor เข้ามามีบทบาทเมื่อองค์กรต้องการสิ่งที่ GHCR ให้ไม่ได้หรือให้ไม่สะดวก:
+>
+> 1. **ต้องการ registry ที่อยู่ในเครือข่ายตัวเอง** — เหตุผลด้าน compliance หรือไม่อยากพึ่ง public cloud registry เลย
+> 2. **ต้องการ scan ช่องโหว่/บังคับ policy จากศูนย์กลาง** ครอบคลุมหลายทีม/หลายโปรเจกต์พร้อมกัน
+> 3. **ต้องการ RBAC ระดับ project ที่ละเอียดกว่า** ที่ GHCR ไม่มีให้ในระดับเดียวกัน
+> 4. **สภาพแวดล้อมแบบ air-gapped หรือ VPN-only** ที่ pull จาก GHCR ไม่ได้เลย
+>
+> ถ้าบริษัทที่ทำงานอยู่ใช้ Harbor แปลว่าเข้าเงื่อนไขข้อใดข้อหนึ่งข้างบน (มักเป็นข้อ 1 หรือ 4) — ไม่ใช่ว่า Harbor "ดีกว่า" GHCR เสมอไป มันคือเครื่องมือที่แก้ปัญหาคนละระดับกัน
+
+---
+
 ## 1. ภาพรวมสถาปัตยกรรม
 
 ```
@@ -173,7 +188,7 @@ jobs:
 **ข้อควรระวังด้านความปลอดภัยที่สำคัญมาก:**
 
 - ❌ **ห้ามใช้ self-hosted runner กับ public repo เด็ดขาด** — ใครก็เปิด PR ที่รันโค้ดอะไรก็ได้ในเครือข่ายภายในของคุณ
-- ให้ runner อยู่ใน network segment ของตัวเอง เปิด egress เท่าที่จำเป็น (GitHub, Harbor, npm registry)
+- ให้ runner อยู่ใน network segment ของตัวเอง เปิด egress เท่าที่จำเป็น (GitHub, Harbor, Go module proxy)
 - ใช้ ephemeral runner (ทำงานเสร็จแล้วทิ้ง) เพื่อไม่ให้งานหนึ่งทิ้งของไว้ให้อีกงานเจอ
 - จำกัดว่า workflow ไหนใช้ runner label นี้ได้บ้าง
 
@@ -191,7 +206,7 @@ harbor.company.internal/
 ```
 
 **proxy cache** สำคัญกว่าที่คิด — ในองค์กรที่ออกเน็ตไม่ได้ตรง ๆ หรือโดน rate limit ของ Docker Hub
-ให้ตั้ง Harbor เป็น proxy cache แล้วเปลี่ยน `FROM node:22-alpine` เป็น `FROM harbor.company.internal/dockerhub-proxy/library/node:22-alpine`
+ให้ตั้ง Harbor เป็น proxy cache แล้วเปลี่ยน `FROM golang:1.25-alpine` เป็น `FROM harbor.company.internal/dockerhub-proxy/library/golang:1.25-alpine`
 
 #### 2.2 Robot Account (ห้ามใช้บัญชีคน)
 
@@ -236,6 +251,16 @@ harbor.company.internal/todo-api/api@sha256:9f2e…
 
 digest คือ hash ของ image เอง ปลอมไม่ได้ ชี้ผิดตัวไม่ได้
 
+#### 🪛 Playground — Harbor
+
+ถ้ามีสิทธิ์เข้า Harbor ที่บริษัท (หรือลง Harbor เองในเครื่องทดลองก็ได้ — มี `docker-compose` ให้ในโปรเจกต์ทางการ):
+
+- [ ] เทียบขนาด image และ digest ของ image เดียวกันระหว่าง GHCR กับ Harbor — ควรเป็นค่าเดียวกันไหม ทำไม
+- [ ] เปิดดู robot account ที่มีอยู่ (Project → Robots) แล้วตรวจว่าสิทธิ์ที่ตั้งไว้ตรงกับ least privilege ไหม (push+pull vs pull-only)
+- [ ] กด **Scan** ที่ tag ใด tag หนึ่งด้วยมือ (ไม่ต้องรอ scan-on-push) แล้วอ่านรายงาน Trivy ว่าแยก severity ยังไง
+- [ ] เปิด Tag Immutability ใน project ทดสอบ แล้วลอง push image ทับ tag เดิม — ดู error ที่ได้จริง
+- [ ] ตั้ง Tag Retention (เช่น เก็บ 5 tag ล่าสุด) แล้วดูว่า Garbage Collection ทำงานตามที่คาดไหม (ต้องรอรอบ GC หรือ trigger เอง)
+
 ---
 
 ### Phase 3 — CI บน GitHub Actions
@@ -256,7 +281,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # 1) ทดสอบ
-      - run: npm ci && npm run typecheck && npm test
+      - run: go build ./... && go vet ./... && go test ./...
 
       # 2) build + push เข้า Harbor
       - uses: docker/login-action@v3
@@ -684,5 +709,13 @@ feature/* ──PR──▶ develop ──▶ [CI] ──▶ Harbor: dev-a1b2c3d
 - [How to Run Harbor Container Registry with Vulnerability Scanning](https://oneuptime.com/blog/post/2026-02-08-how-to-run-harbor-container-registry-with-vulnerability-scanning/view)
 - [Container Registry Security Hardening: Harbor + Trivy + RBAC](https://www.hostmycode.com/blog/container-registry-security-hardening-harbor-trivy-scanner-rbac-dedicated-servers)
 - [Harbor 2.0 OCI support — Harbor blog](https://goharbor.io/blog/harbor-2.0/)
+
+## 🪛 Playground
+
+- [ ] วาดสถาปัตยกรรมใน §1 ใหม่ด้วยมือตัวเอง (กระดาษหรือ excalidraw) โดยไม่ดูต้นฉบับ แล้วเทียบว่าตกอะไรไป
+- [ ] เขียนคำตอบสั้น ๆ ว่าทำไม push-based (`kubectl apply` จาก CI) ถึงไม่เหมาะกับองค์กรที่มี VPN-only network — เทียบกับตาราง §2
+- [ ] จำลอง incident: สมมติมีคน `kubectl edit` แก้ replicas ตรง ๆ ใน prod แล้วเปิด `selfHeal: true` ไว้ — คาดเดาว่า Argo จะทำอะไรใน 3 นาทีถัดไป แล้วอธิบายว่าทำไม
+- [ ] เทียบตาราง §9 (โปรเจกต์ฝึก vs องค์กร) กับ setup จริงของบริษัทที่ทำงานอยู่ — ต่างกันตรงไหนบ้าง เพราะอะไร
+- [ ] ถ้าที่ทำงานใช้ Harbor อยู่แล้ว ไปทำ Playground เฉพาะ Harbor ใน §Phase 2 ก่อน แล้วค่อยกลับมาข้อบนนี้
 
 ➡️ [12 — แก้ปัญหาที่เจอบ่อย](12-troubleshooting.md) · 🏋️ [แบบฝึกหัด CI/CD](../exercises/cicd/01-beginner.md)

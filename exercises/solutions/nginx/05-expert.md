@@ -84,7 +84,7 @@ wait
 | ทางเลือก | บังคับ SLA ได้ | ค่าใช้จ่าย | เวลา implement |
 |---|---|---|---|
 | A. ตั้ง limit-rps เป็น 20/replica แล้วล็อก replica | บางส่วน | ไม่มี | 1 วัน |
-| B. เพิ่ม Redis + express-rate-limit | ✅ | Redis 1 instance | 1 สัปดาห์ |
+| B. เพิ่ม Redis + middleware rate-limit ของ Gin (เช่น `ulule/limiter`) | ✅ | Redis 1 instance | 1 สัปดาห์ |
 | C. ใส่ API Gateway (Kong) | ✅ | สูง + ต้องเรียนรู้ | 1 เดือน |
 
 ## การตัดสินใจ
@@ -132,7 +132,25 @@ location /api/ {
 }
 ```
 
-**กันอะไร:** คนที่เข้ามาอยู่ในเครือข่ายภายในได้แล้ว (lateral movement) จะยิงตรงไปที่ backend ไม่ได้ เพราะไม่มี cert
+ฝั่ง backend (Go) ต้องเปิด TLS พร้อมบังคับ client cert แทน `http.ListenAndServe` ธรรมดา:
+
+```go
+caPool := x509.NewCertPool()
+caCert, _ := os.ReadFile("/etc/certs/ca.crt")
+caPool.AppendCertsFromPEM(caCert)
+
+srv := &http.Server{
+	Addr:    ":3000",
+	Handler: r, // *gin.Engine
+	TLSConfig: &tls.Config{
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  caPool,
+	},
+}
+srv.ListenAndServeTLS("/etc/certs/server.crt", "/etc/certs/server.key")
+```
+
+**กันอะไร:** คนที่เข้ามาอยู่ในเครือข่ายภายในได้แล้ว (lateral movement) จะยิงตรงไปที่ backend ไม่ได้ เพราะไม่มี cert — `tls.RequireAndVerifyClientCert` บังคับให้ handshake ล้มเหลวทันทีถ้า client (ในที่นี้คือ nginx) ไม่ยื่น cert ที่เซ็นโดย CA ใน `ClientCAs`
 เป็นการยืนยันว่า **"traffic นี้มาจาก proxy ของเราจริง"** ไม่ใช่แค่ "มาจากใครสักคนในวงเดียวกัน"
 
 **ในทางปฏิบัติ:** ถ้าอยู่บน Kubernetes การทำ mTLS ด้วยมือแบบนี้เจ็บปวดมาก (ต้องหมุน cert เอง)

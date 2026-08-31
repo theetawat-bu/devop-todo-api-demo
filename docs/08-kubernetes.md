@@ -141,7 +141,7 @@ readinessProbe:
 initContainers:
   - name: migrate
     image: <same image>
-    command: ["sh", "-c", "npx prisma migrate deploy"]
+    command: ["sh", "-c", "migrate -path ./migrations -database \"$DATABASE_URL\" up"]
 ```
 
 initContainer รันจนจบก่อน container หลักจะเริ่ม → migration รันครั้งเดียวก่อน ไม่ใช่รันพร้อมกันทุก pod
@@ -173,10 +173,13 @@ terminationGracePeriodSeconds: 30
 ```
 
 `maxUnavailable: 0` = pod ใหม่ต้อง ready ก่อน ถึงจะฆ่าตัวเก่า
-ฝั่งแอปต้องรองรับด้วย — ดู `src/index.ts` ที่ดัก `SIGTERM` แล้วปิด server อย่างสุภาพ ไม่ตัด request ที่ค้างอยู่
+ฝั่งแอปต้องรองรับด้วย — ดู `cmd/api/main.go` ที่ดัก `SIGTERM` แล้วปิด server อย่างสุภาพ ไม่ตัด request ที่ค้างอยู่
 
-```ts
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+```go
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+sig := <-quit
+// ... srv.Shutdown(shutdownCtx) รอ request ที่ค้างอยู่ให้จบก่อนค่อยปิดจริง
 ```
 
 ถ้าแอปไม่ดัก SIGTERM → k8s รอ 30 วิแล้ว SIGKILL → request ที่กำลังทำอยู่ขาดกลางคัน
@@ -191,7 +194,7 @@ securityContext:
   capabilities: { drop: ["ALL"] }
 ```
 
-ทำงานคู่กับ `USER node` ใน Dockerfile ถ้า image รันเป็น root อยู่ pod จะสตาร์ทไม่ขึ้นเลย
+ทำงานคู่กับ user ที่ไม่ใช่ root ที่ตั้งไว้ใน Dockerfile (ดู [03 — ทำไมต้องสร้าง user เอง](03-docker.md)) ถ้า image รันเป็น root อยู่ pod จะสตาร์ทไม่ขึ้นเลย
 
 ### HPA
 
@@ -655,6 +658,16 @@ curl -H "Host: todo.x.nip.io" http://<IP>/healthz               # 6. เข้�
 **ชั้นแรกที่พังคือชั้นที่ต้องแก้** — วิธีนี้ใช้เวลาไม่กี่นาทีและตอบได้เสมอว่าปัญหาอยู่ตรงไหน
 
 ---
+
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] แก้ `readinessProbe` ให้ชี้ path ผิด (เช่น `/notexist`) แล้ว apply ดูว่า `rollout status` ค้างตรงไหนและ `describe pod` บอกอะไร
+- [ ] `kubectl -n todo-app delete pod <pod>` ตัวหนึ่งระหว่างมี traffic แล้วดูว่า Service เปลี่ยนไปหา pod ที่เหลือเร็วแค่ไหน
+- [ ] ลอง scale `kubectl -n todo-app scale deployment/todo-api --replicas=5` แล้วยิงโหลดดูว่า HPA ปรับกลับไหมถ้ามันตั้งเป็น `minReplicas: 2, maxReplicas: 6`
+- [ ] เทียบผลลัพธ์ `kubectl kustomize k8s/overlays/dev` กับ `k8s/overlays/production` — ต่างกันตรงไหนบ้างจริง ๆ
+- [ ] ลบ `initContainers` ของ migrate ออกชั่วคราวแล้ว apply ดูว่า pod ตัวหลักพังยังไงเมื่อ schema ไม่ตรง
 
 ➡️ ต่อไป: [แบบฝึกหัด](../exercises/README.md)
 📊 อ่านคู่กัน: [09 — จะตั้ง LB / rate limit / health check ที่ชั้นไหนดี](09-where-to-configure.md)

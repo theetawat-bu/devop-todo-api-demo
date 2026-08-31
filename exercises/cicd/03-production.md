@@ -62,7 +62,7 @@
 
 ### C3.8 สแกนความปลอดภัยใน pipeline
 
-**โจทย์:** เพิ่ม 3 อย่าง — `npm audit --audit-level=high`, Trivy สแกน image, gitleaks หา secret ที่หลุด
+**โจทย์:** เพิ่ม 3 อย่าง — `govulncheck ./...`, Trivy สแกน image, gitleaks หา secret ที่หลุด
 **ผ่านเมื่อ:** ลองใส่ secret ปลอมลงไฟล์แล้ว gitleaks จับได้และ CI แดง
 
 ---

@@ -14,7 +14,7 @@
 | --- | --- |
 | build ครั้งแรก (หลัง `docker builder prune`) | ? |
 | build ซ้ำโดยไม่แก้อะไร | ? |
-| build หลังแก้ `src/index.ts` 1 บรรทัด | ? |
+| build หลังแก้ `cmd/api/main.go` 1 บรรทัด | ? |
 
 **คำใบ้:** `time docker build -t t .`
 **ผ่านเมื่อ:** มีตัวเลขครบ 3 แถว และชี้ได้ว่าในกรณีที่ 3 layer ไหนขึ้น `CACHED` บ้าง layer ไหนต้องทำใหม่
@@ -23,14 +23,14 @@
 
 ### D2.2 ทำลาย cache ให้เห็นกับตา
 
-**โจทย์:** ย้าย `COPY src ./src` ขึ้นไปไว้**ก่อน** `RUN npm ci` แล้ว build ใหม่หลังแก้โค้ด 1 บรรทัด
+**โจทย์:** ย้าย `COPY cmd ./cmd` และ `COPY internal ./internal` ขึ้นไปไว้**ก่อน** `RUN go mod download` แล้ว build ใหม่หลังแก้โค้ด 1 บรรทัด
 **ผ่านเมื่อ:** วัดได้ว่าช้าลงกี่วินาที อธิบายเหตุผลได้ แล้ว **ย้ายกลับที่เดิม**
 
 ---
 
 ### D2.3 `.dockerignore` มีผลแค่ไหน
 
-**โจทย์:** ติดตั้ง `node_modules` ในเครื่องก่อน (`npm install`) แล้วเปลี่ยนชื่อ `.dockerignore` ชั่วคราว จากนั้น build
+**โจทย์:** ดาวน์โหลด module cache ในเครื่องก่อน (`go mod download`) แล้วเปลี่ยนชื่อ `.dockerignore` ชั่วคราว จากนั้น build
 **คำใบ้:** ดูบรรทัด `transferring context` ในผลลัพธ์
 **ผ่านเมื่อ:** เทียบขนาด build context ก่อน-หลังได้ และบอกผลเสีย 2 ข้อของการไม่มี `.dockerignore` (ข้อหนึ่งเกี่ยวกับความเร็ว อีกข้อเกี่ยวกับความปลอดภัย)
 
@@ -39,7 +39,7 @@
 ### D2.4 ลดขนาด image ลง 10%
 
 **โจทย์:** ทำให้ image เล็กลงอย่างน้อย 10% โดยแอปยังทำงานเหมือนเดิม
-**คำใบ้:** ลองอย่างใดอย่างหนึ่งหรือหลายอย่าง — `npm cache clean --force` ใน layer เดียวกับ install / ไม่ copy ไฟล์ที่ไม่ได้ใช้ / เทียบ base image คนละตัว
+**คำใบ้:** ลองอย่างใดอย่างหนึ่งหรือหลายอย่าง — build ด้วย `-ldflags="-s -w"` เพื่อตัด debug symbol ออกจาก binary / ไม่ copy ไฟล์ที่ไม่ได้ใช้ / เทียบ base image คนละตัว (`alpine` vs `distroless/static`)
 **ผ่านเมื่อ:** บันทึกขนาดก่อน-หลัง และ `/healthz` ยังตอบ 200
 
 ---
@@ -62,8 +62,8 @@
 
 ### D2.7 เข้าใจ CMD vs ENTRYPOINT
 
-**โจทย์:** ลองเปลี่ยนคำสั่งตอนรันโดยไม่ต้อง build ใหม่ เช่นให้ container รัน `node -e "console.log(process.version)"` แทน
-**คำใบ้:** `docker run --rm devops-todo-api:local node -e "..."`
+**โจทย์:** ลองเปลี่ยนคำสั่งตอนรันโดยไม่ต้อง build ใหม่ เช่นให้ container รัน `./api --version` หรือ `sh -c "echo hi"` แทน
+**คำใบ้:** `docker run --rm devops-todo-api:local sh -c "echo hi"`
 **ผ่านเมื่อ:** อธิบายได้ว่าถ้าเปลี่ยน `CMD` เป็น `ENTRYPOINT` แล้วคำสั่งข้างบนจะให้ผลต่างกันยังไง
 
 ---

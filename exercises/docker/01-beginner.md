@@ -25,7 +25,7 @@
 docker compose up -d db          # ยืม postgres จาก compose มาใช้ก่อน
 docker network ls                # หาชื่อ network ที่ compose สร้าง
 docker run -d --name api-manual --network <ชื่อ network> -p 3000:3000 \
-  -e DATABASE_URL="postgresql://app:app_password@db:5432/tododb?schema=public" \
+  -e DATABASE_URL="postgresql://app:app_password@db:5432/tododb?sslmode=disable" \
   devops-todo-api:local
 ```
 
@@ -43,9 +43,9 @@ docker run -d --name api-manual --network <ชื่อ network> -p 3000:3000 \
 
 ### D1.4 สำรวจข้างใน container
 
-**โจทย์:** เข้าไปใน container แล้วตอบ — รันด้วย user อะไร, `/app` มีอะไรบ้าง, มี source code `.ts` อยู่ไหม
-**คำใบ้:** `docker exec -it api-manual sh` แล้วลอง `whoami`, `id`, `ls -la /app`, `ls /app/dist`
-**ผ่านเมื่อ:** ตอบได้ว่าทำไมไม่ใช่ root และทำไมไม่มีไฟล์ `.ts` ทั้งที่โปรเจกต์เขียนด้วย TypeScript
+**โจทย์:** เข้าไปใน container แล้วตอบ — รันด้วย user อะไร, `/app` มีอะไรบ้าง, มี source code `.go` หรือ Go toolchain ติดไปด้วยไหม
+**คำใบ้:** `docker exec -it api-manual sh` แล้วลอง `whoami`, `id`, `ls -la /app`, `which go`
+**ผ่านเมื่อ:** ตอบได้ว่าทำไมไม่ใช่ root และทำไม `/app` มีแค่ `api` (binary), `migrate` (binary), กับโฟลเดอร์ `migrations/` — ไม่มีไฟล์ `.go` ไม่มี `go.mod` ไม่มี module cache ทั้งที่โปรเจกต์เขียนด้วย Go
 
 ---
 
@@ -53,7 +53,7 @@ docker run -d --name api-manual --network <ชื่อ network> -p 3000:3000 \
 
 **โจทย์:** รัน container โดย**ไม่ใส่** `DATABASE_URL` แล้วหาสาเหตุว่าทำไมมันตาย
 **คำใบ้:** `docker logs <container>` และ `docker ps -a` ดูคอลัมน์ STATUS
-**ผ่านเมื่อ:** อ้างอิงได้ว่า error มาจากไฟล์ไหนบรรทัดไหน (`src/env.ts`) และอธิบายได้ว่าทำไมการตายทันทีแบบนี้ดีกว่าปล่อยให้รันไปเรื่อย ๆ แล้วค่อยพังตอนมี request
+**ผ่านเมื่อ:** อ้างอิงได้ว่า error มาจากส่วนไหนของ startup (`internal/config` อ่าน env แล้วโปรแกรมออก non-zero exit ทันทีถ้าค่าที่จำเป็นหาย) และอธิบายได้ว่าทำไมการตายทันทีแบบนี้ดีกว่าปล่อยให้รันไปเรื่อย ๆ แล้วค่อยพังตอนมี request
 
 ---
 
@@ -67,8 +67,9 @@ docker run -d --name api-manual --network <ชื่อ network> -p 3000:3000 \
 
 ### D1.7 อ่าน Dockerfile ให้จบทั้งไฟล์
 
-**โจทย์:** ไล่อ่าน `Dockerfile` แล้วตอบว่าทำไมมี `FROM` ถึง 3 อัน แต่ image สุดท้ายมีของจาก stage ไหนบ้าง
-**ผ่านเมื่อ:** วาดแผนภาพได้ว่าอะไรถูก copy จาก stage ไหนไปที่ไหน
+**โจทย์:** ไล่อ่าน `Dockerfile` แล้วตอบว่าทำไมมี `FROM` แค่ 2 อัน (ไม่ใช่ 3 แบบที่โปรเจกต์ Node ทั่วไปมักมี — build / deps / runner) แล้ว image สุดท้ายมีของจาก stage ไหนบ้าง
+**คำใบ้:** สังเกตว่า `builder` stage ติดตั้งทั้ง Go toolchain และ compile ทั้ง `api` และ `migrate` เอง ไม่มี stage แยกสำหรับ "production dependencies" เหมือนฝั่ง Node เพราะ Go binary ที่ compile แล้วไม่ต้องพก dependency ใด ๆ ไปด้วยเลย
+**ผ่านเมื่อ:** วาดแผนภาพได้ว่าอะไรถูก copy จาก `builder` ไปที่ `runner` (มีแค่ 2 ไฟล์ + 1 โฟลเดอร์: `api`, `migrate`, `migrations/`) และอธิบายได้ว่าทำไม Go ถึงทำให้ multi-stage build เรียบง่ายกว่าภาษาที่ต้อง ship runtime + module cache ไปด้วย
 
 ---
 

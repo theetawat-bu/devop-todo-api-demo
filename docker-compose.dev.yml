@@ -1,18 +1,22 @@
 # ใช้คู่กับไฟล์หลัก:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-# โหมดนี้ mount source เข้าไปและใช้ tsx watch ให้ hot reload
+# โหมดนี้ mount source เข้าไปและใช้ `go run` รันจาก source ตรง ๆ (ไม่ build binary ล่วงหน้า)
 services:
   api:
     build:
       context: .
       target: builder
-    command: sh -c "npx prisma migrate deploy && npx tsx watch src/index.ts"
-    environment:
-      NODE_ENV: development
+    command: sh -c "migrate -path ./migrations -database \"$$DATABASE_URL\" up && go run ./cmd/api"
+    working_dir: /app
     volumes:
-      - ./src:/app/src
-      - ./prisma:/app/prisma
+      - ./cmd:/app/cmd
+      - ./internal:/app/internal
+      - ./migrations:/app/migrations
+      - go-build-cache:/root/.cache/go-build
     deploy:
       replicas: 1
     ports:
       - "3000:3000" # dev เปิดตรงไว้ debug ได้
+
+volumes:
+  go-build-cache:

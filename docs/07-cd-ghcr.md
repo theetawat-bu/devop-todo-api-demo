@@ -135,4 +135,14 @@ environment: production
 
 ใน `k8s/base/api.yaml` เราตั้ง `maxUnavailable: 0` + `maxSurge: 1` = สร้าง pod ใหม่ให้พร้อมก่อน ค่อยฆ่าตัวเก่า → ไม่มี downtime
 
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] เปิด PR แล้วดู tag ที่ `docker/metadata-action` สร้างให้ที่แท็บ **Packages** — มีกี่ tag ตรงกับตารางในบทนี้ไหม
+- [ ] เทียบ `docker pull ghcr.io/you/todo:main` สองครั้งห่างกันหนึ่ง deploy ดูว่า digest (`sha256:...`) เปลี่ยนไหมทั้งที่ tag เดิม
+- [ ] ลอง deploy ด้วย `sha-<commit>` แทน `latest` แล้วลบ image tag นั้นออกจาก registry ดูว่า pod เก่าที่รันอยู่ได้รับผลกระทบไหม (ควรไม่กระทบ เพราะดึงมาแล้ว)
+- [ ] ตั้ง **Required reviewers** ที่ environment `production` แล้วลอง trigger deploy ดูว่า workflow ค้างรออะไร
+- [ ] ลบ `rollout status --timeout=180s` ออกชั่วคราว (ในเครื่องทดสอบเท่านั้น) แล้วจำลอง image พัง ดูว่า workflow ยังรายงานเขียวทั้งที่ pod ไม่ขึ้นไหม
+
 ➡️ ต่อไป: [08 — Kubernetes](08-kubernetes.md)

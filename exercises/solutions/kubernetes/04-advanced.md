@@ -129,20 +129,29 @@ pod ที่ ready แต่ตอบ 500 ให้ 30% ของ request จ�
 
 ## K4.5 Prometheus
 
-```ts
-// src/metrics.ts
-import client from "prom-client";
-export const registry = new client.Registry();
-client.collectDefaultMetrics({ register: registry });
+```go
+// internal/metrics/metrics.go
+package metrics
 
-export const httpDuration = new client.Histogram({
-  name: "http_request_duration_seconds",
-  help: "ระยะเวลาของ request",
-  labelNames: ["method", "route", "status"],
-  buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 3],
-  registers: [registry],
-});
+import "github.com/prometheus/client_golang/prometheus"
+
+var Registry = prometheus.NewRegistry()
+
+var HTTPDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "http_request_duration_seconds",
+		Help:    "ระยะเวลาของ request",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.3, 0.5, 1, 3},
+	},
+	[]string{"method", "route", "status"},
+)
+
+func init() {
+	Registry.MustRegister(HTTPDuration, collectors.NewGoCollector())
+}
 ```
+
+ต่อเข้ากับ Gin ด้วย middleware ที่เรียก `HTTPDuration.WithLabelValues(...).Observe(...)` แล้ว mount `/metrics` ด้วย `promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{})`
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1

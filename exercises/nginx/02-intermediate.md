@@ -23,7 +23,7 @@ docker compose logs nginx | grep -o 'upstream=[0-9.:]*' | sort | uniq -c
 ### N2.2 round-robin vs least_conn
 
 **โจทย์:** ทำให้บาง request ช้า (เพิ่ม endpoint ที่หน่วง 3 วิ) แล้วยิงผสมกับ request เร็ว เทียบสองอัลกอริทึม
-**คำใบ้:** เพิ่มใน `src/app.ts`: `app.get('/api/slow', async (_,res)=>{ await new Promise(r=>setTimeout(r,3000)); res.json({ok:true}) })`
+**คำใบ้:** เพิ่มใน `internal/app/app.go`: `r.GET("/api/slow", func(c *gin.Context) { time.Sleep(3 * time.Second); c.JSON(200, gin.H{"ok": true}) })`
 **ผ่านเมื่อ:** อธิบายได้ว่าเคสไหน `least_conn` ช่วย และเคสไหนไม่ต่างจาก round-robin เลย
 
 ---
@@ -64,7 +64,7 @@ python3 -c "print('{\"title\":\"' + 'x'*2000000 + '\"}')" > /tmp/big.json
 curl -i -X POST localhost:8080/api/todos -H 'Content-Type: application/json' --data-binary @/tmp/big.json
 ```
 
-**ผ่านเมื่อ:** ได้ 413 จาก nginx (ดูจาก header `Server`) และอธิบายได้ว่าทำไมตัดที่ nginx ดีกว่าปล่อยให้ Express อ่านจนครบ
+**ผ่านเมื่อ:** ได้ 413 จาก nginx (ดูจาก header `Server`) และอธิบายได้ว่าทำไมตัดที่ nginx ดีกว่าปล่อยให้ Gin อ่าน body จนครบ
 
 ---
 

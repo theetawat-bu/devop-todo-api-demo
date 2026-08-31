@@ -8,28 +8,29 @@
 
 ### C2.1 เพิ่มเทสจริงแทน smoke test ⭐
 
-**โจทย์:** เขียนเทสด้วย Jest + Supertest แล้วให้ CI เรียกแทน smoke test แบบ curl
+**โจทย์:** เขียนเทสด้วย `net/http/httptest` แล้วให้ CI เรียกแทน smoke test แบบ curl
 
 ```bash
-npm i -D jest ts-jest @types/jest supertest @types/supertest
+go test ./... -v
 ```
 
-**คำใบ้:** `src/app.ts` แยก `createApp()` ออกจาก `listen()` ไว้แล้วเพื่อการนี้ — supertest รับ app object ได้เลยโดยไม่ต้องเปิด port
+**คำใบ้:** `internal/app.New()` (หรือฟังก์ชันเทียบเท่าที่คืน `*gin.Engine`) แยกการสร้าง router ออกจาก `main()` ที่เรียก `.Run()` ไว้แล้วเพื่อการนี้ — `httptest.NewRecorder()` + `router.ServeHTTP(...)` ยิง request เข้า handler ได้โดยตรงโดยไม่ต้องเปิด port จริง
 **ผ่านเมื่อ:** มีเทสอย่างน้อย 6 เคส (สร้าง/อ่าน/แก้/ลบ/ไม่เจอ 404/validation 400) และ CI รันผ่าน
 
 ---
 
 ### C2.2 เพิ่ม lint
 
-**โจทย์:** เพิ่ม ESLint + Prettier แล้วสร้าง job `lint` ที่รัน**ขนานกับ** job test
+**โจทย์:** เพิ่ม `golangci-lint` แล้วสร้าง job `lint` ที่รัน**ขนานกับ** job test
+**คำใบ้:** `golangci-lint run ./...` ครอบคลุม linter หลายตัวพร้อมกัน (คล้าย ESLint ฝั่ง JS) รวมถึงตรวจ format ด้วย `gofmt -l .` (ถ้ามีไฟล์ค้าง format ผิดจะ list ออกมา — คล้าย `prettier --check`)
 **ผ่านเมื่อ:** สอง job รันพร้อมกัน (ดูจากกราฟใน Actions) และเวลารวมไม่เพิ่มขึ้นมาก
 
 ---
 
 ### C2.3 matrix build
 
-**โจทย์:** รันเทสบน Node 20 และ 22 พร้อมกัน
-**คำใบ้:** `strategy: { matrix: { node: [20, 22] } }` แล้วใช้ `${{ matrix.node }}`
+**โจทย์:** รันเทสบน Go 1.24 และ 1.25 พร้อมกัน
+**คำใบ้:** `strategy: { matrix: { go: ["1.24", "1.25"] } }` แล้วใช้ `${{ matrix.go }}` ใน `actions/setup-go@v5`
 **ผ่านเมื่อ:** เห็น 2 job แยกกัน และเข้าใจว่าถ้าเพิ่มอีกมิติ (เช่น OS) จำนวน job จะคูณกัน
 
 ---
@@ -45,7 +46,7 @@ npm i -D jest ts-jest @types/jest supertest @types/supertest
 ### C2.5 วัดและลดเวลา CI
 
 **โจทย์:** จดเวลาปัจจุบัน แล้วทำให้เร็วขึ้นอย่างน้อย 30%
-**คำใบ้ที่ควรลอง:** `cache: 'npm'`, ตัด step ที่ซ้ำ, ใช้ `needs:` ให้ถูก, เปิด docker layer cache
+**คำใบ้ที่ควรลอง:** cache ของ `actions/setup-go@v5` (เปิดอยู่แล้วโดยดีฟอลต์), ตัด step ที่ซ้ำ, ใช้ `needs:` ให้ถูก, เปิด docker layer cache
 **ผ่านเมื่อ:** มีตัวเลขก่อน-หลังจากหน้า Actions จริง
 
 ---

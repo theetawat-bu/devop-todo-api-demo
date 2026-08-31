@@ -82,7 +82,7 @@ git tag v1.0.0 && git push origin v1.0.0
 
 ```bash
 git checkout dev
-echo 'const x: number = "พัง";' >> src/index.ts
+echo 'var x int = "พัง"' >> cmd/api/main.go
 git commit -am "test: ทำให้ CI พัง"
 git push
 ```
@@ -114,12 +114,12 @@ build:
 
 ## C3.5 พิสูจน์ verify
 
-```ts
-// ใส่ชั่วคราวใน src/index.ts
-throw new Error("จงใจทำให้พังตอน runtime");
+```go
+// ใส่ชั่วคราวใน cmd/api/main.go ต้นฟังก์ชัน main()
+panic("จงใจทำให้พังตอน runtime")
 ```
 
-typecheck และ build ผ่าน (เพราะ syntax ถูก) แต่แอปตายตอนสตาร์ท
+`go build` ผ่าน (เพราะ syntax และ type ถูกหมด) แต่แอปตายตอนสตาร์ท
 
 ผลที่ต้องได้:
 
@@ -194,8 +194,10 @@ workflow จะหยุดรอ พร้อมส่งอีเมล/notifi
 ## C3.8 สแกนความปลอดภัย
 
 ```yaml
-- name: npm audit
-  run: npm audit --audit-level=high
+- name: govulncheck
+  run: |
+    go install golang.org/x/vuln/cmd/govulncheck@latest
+    govulncheck ./...
 
 - name: Trivy
   uses: aquasecurity/trivy-action@master
@@ -214,11 +216,12 @@ workflow จะหยุดรอ พร้อมส่งอีเมล/notifi
 ทดสอบ gitleaks:
 
 ```bash
-echo 'const key = "AKIAIOSFODNN7EXAMPLE";' >> src/test.ts
+echo 'const key = "AKIAIOSFODNN7EXAMPLE"' >> cmd/api/scratch.go
 git commit -am "test" && git push     # gitleaks ต้องจับได้
 ```
 
 **`ignore-unfixed: true` สำคัญ:** ถ้าไม่ใส่ CI จะแดงเพราะช่องโหว่ที่ upstream ยังไม่มี patch — ซึ่งเราแก้อะไรไม่ได้
+**`govulncheck` ต่างจาก Trivy ยังไง:** `govulncheck` วิเคราะห์ **call graph** จริงของโค้ดเรา — เตือนเฉพาะ vulnerability ที่โค้ดเราเรียกใช้ฟังก์ชันที่มีช่องโหว่จริง ๆ ไม่ใช่แค่ "module นี้มี CVE อยู่ในนั้น" เหมือน dependency scanner ทั่วไป ทำให้ noise น้อยกว่ามาก
 ผลคือทีมจะชินกับการเห็น CI แดงแล้วเมิน ซึ่งทำลายคุณค่าของการสแกนทั้งหมด
 
 **สิ่งที่ต้องจำ:** secret ที่เคย commit ลง git **ถือว่าหลุดถาวร** แม้จะ force push ลบไปแล้ว

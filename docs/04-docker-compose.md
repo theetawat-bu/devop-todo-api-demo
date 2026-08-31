@@ -88,9 +88,11 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 Compose จะ **merge** ไฟล์หลังทับไฟล์แรก ไฟล์ dev เปลี่ยน 3 อย่าง:
 
-1. `target: builder` — ใช้ stage ที่มี devDependencies ครบ
-2. mount `./src` เข้า container + ใช้ `tsx watch` — แก้โค้ดแล้วรีสตาร์ทเอง ไม่ต้อง rebuild
+1. `target: builder` — ใช้ stage ที่มี Go toolchain เต็ม (`go run` ใช้ตัวคอมไพเลอร์ตรง ๆ)
+2. mount `./cmd`, `./internal`, `./migrations` เข้า container + ใช้ `go run ./cmd/api` — แก้โค้ดแล้ว restart container ให้คอมไพล์ใหม่ (Go ไม่มี hot-reload แบบ `tsx watch` ในตัว เพราะเป็นภาษา compiled — `go run` คอมไพล์ทุกครั้งที่รัน ซึ่งเร็วพอสำหรับโปรเจกต์เล็กขนาดนี้)
 3. เปิด port 3000 ตรง ๆ ไว้ debug
+
+ถ้าอยากได้ hot-reload แบบไม่ต้อง restart container เอง มี tool อย่าง [`air`](https://github.com/air-verse/air) ที่ watch ไฟล์แล้วสั่ง build+run ให้อัตโนมัติ — โปรเจกต์นี้ตั้งใจไม่ใช้เพื่อลด dependency แต่รู้ไว้ว่ามีตัวเลือกนี้อยู่
 
 pattern "ไฟล์ base + ไฟล์ override" นี้ใช้กันมาก เช่น `docker-compose.prod.yml` สำหรับ production
 
@@ -116,5 +118,15 @@ docker compose up -d --build api                        # build+restart เฉ�
 ```
 
 `docker compose config` มีประโยชน์มากเวลาไม่แน่ใจว่าตัวแปรถูกแทนค่าอะไรไป
+
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] `docker compose stop db` แล้วดู `docker compose logs api` — แอปพัง หรือ retry
+- [ ] ลบ `condition: service_healthy` ออกชั่วคราวแล้ว `up` ใหม่ ดูว่าเกิดอะไรขึ้น
+- [ ] scale เป็น 4 แล้วยิง `for i in $(seq 1 20); do curl -s localhost:8080/api/todos > /dev/null; done` ดู `docker compose logs nginx`
+- [ ] `docker compose down -v` แล้ว `up` ใหม่ — ข้อมูลหายจริงไหม เทียบกับตอนใช้ `down` เฉย ๆ
+- [ ] แก้ `PORT` ใน `.env` เป็นค่าอื่น แล้วดูว่าตรงไหนพังบ้าง (เพราะ hardcode ไว้หลายที่)
 
 ➡️ ต่อไป: [05 — Nginx](05-nginx.md)

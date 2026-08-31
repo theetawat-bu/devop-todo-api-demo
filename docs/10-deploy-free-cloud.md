@@ -13,7 +13,7 @@
 
 | Phase ในเอกสารนี้ | ต้องรู้อะไร | อ่านที่ | ถ้าไม่รู้จะเจออะไร |
 | --- | --- | --- | --- |
-| **0. Neon** | `migrate deploy` ≠ `migrate dev`, `DATABASE_URL` ต่าง environment | [02](02-local-development.md) | migration ของ dev ไปแก้ตาราง prod |
+| **0. Neon** | `golang-migrate` ใช้คำสั่ง `up` เดียวกันทั้ง dev/prod, `DATABASE_URL` ต่าง environment | [02](02-local-development.md) | migration ของ dev ไปแก้ตาราง prod |
 | **1. k3d ใน CI** | probe, rollout, kustomize overlay | [08](08-kubernetes.md) | อ่านผล e2e ไม่ออกว่าพังเพราะอะไร |
 | **2. PaaS** | image tag vs digest, GHCR permissions, environment/secret | [07](07-cd-ghcr.md) | push image ไม่ได้ / deploy ผิดเวอร์ชัน |
 | **3. Kubernetes บน Oracle** | **multi-arch build (ARM)** | [03 ภาคลึก](03-docker.md) | `exec format error` แล้วหาสาเหตุไม่เจอ |
@@ -180,7 +180,7 @@ jobs:
 2. **Create project** → ตั้งชื่อ `devops-todo-api` → เลือก region ใกล้สุด
 3. สร้าง 2 database แยกกัน: `todo_dev` และ `todo_prod`
    (free tier ให้ 0.5 GB ต่อ project — พอสำหรับทั้งสอง)
-4. คัดลอก connection string แบบ **Prisma** จะได้หน้าตาแบบนี้:
+4. คัดลอก connection string ปกติ จะได้หน้าตาแบบนี้:
 
 ```
 postgresql://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/todo_prod?sslmode=require
@@ -216,24 +216,15 @@ postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/...          ← direct (�
 
 ```bash
 # ใช้เส้น direct (ไม่มี -pooler) สำหรับ migrate
-DATABASE_URL="postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/todo_prod?sslmode=require" \
-  npx prisma migrate deploy
-
-npx prisma studio     # เปิดดูว่าตาราง todos ถูกสร้างจริง
+migrate -path migrations -database "postgresql://...@ep-xxx.ap-southeast-1.aws.neon.tech/todo_prod?sslmode=require" up
 ```
 
-### ⚠️ ถ้าเจอ `P3005: The database schema is not empty`
+ไม่มี GUI แบบ Prisma Studio ติดมาให้ดูว่าตาราง `todos` ถูกสร้างจริงไหม — ต่อด้วย `psql` ตรง ๆ หรือใช้ [TablePlus](https://tableplus.com/)/[DBeaver](https://dbeaver.io/) ถ้าอยากได้ GUI (เหมือนที่ [02](02-local-development.md) แนะนำไว้)
 
-แปลว่า DB **มีตารางอยู่แล้วแต่ไม่มีประวัติ migration** — มักเกิดจากเคยรัน `prisma db push` มาก่อน
+### ⚠️ ถ้าเจอ DB มีตารางอยู่แล้วแต่ไม่มีประวัติ migration (เทียบเท่า Prisma's P3005)
 
-```bash
-npx prisma db pull --print              # ดูก่อนว่าข้างในมีอะไร
-
-npx prisma migrate reset --force        # ทาง A: ข้อมูลทิ้งได้ → ล้างแล้วเริ่มใหม่
-npx prisma migrate resolve --applied 20260812000000_init   # ทาง B: schema ตรงอยู่แล้ว → baseline
-```
-
-รายละเอียดครบทุกกรณีอยู่ที่ [12 — Troubleshooting](12-troubleshooting.md)
+มักเกิดจากเคยสร้างตารางด้วยวิธีอื่นมาก่อน (SQL ตรง ๆ, tool อื่น) แล้วเพิ่งมาเริ่มใช้ `golang-migrate`
+ถ้ามั่นใจว่า schema ปัจจุบันตรงกับ migration ไฟล์แรกเป๊ะ ให้ `force` เวอร์ชันนั้นแทนที่จะรัน `up` ตรง ๆ — ขั้นตอนเต็มพร้อมคำสั่งอยู่ที่ [12 — Troubleshooting](12-troubleshooting.md)
 
 ---
 
@@ -306,7 +297,6 @@ git push -u origin feature/test-e2e
 | Key | Value |
 | --- | --- |
 | `DATABASE_URL` | connection string ของ `todo_dev` (รวม `?sslmode=require`) |
-| `NODE_ENV` | `production` |
 
 > ⚠️ ต้องทำให้ package บน GHCR เป็น **public** ก่อน ไม่งั้น Render ดึงไม่ได้
 > repo → แท็บ **Packages** → เลือก package → **Package settings** → **Change visibility** → Public
@@ -569,7 +559,7 @@ exec /usr/local/bin/docker-entrypoint.sh: exec format error
 kubectl -n todo-app set image deployment/todo-api api="$IMAGE" migrate="$IMAGE"
 ```
 
-`migrate` คือ initContainer ที่รัน `prisma migrate deploy`
+`migrate` คือ initContainer ที่รัน `migrate -path ./migrations -database "$DATABASE_URL" up`
 
 **ถ้าลืมใส่ `migrate=`** จะเกิดสถานการณ์ที่ debug ยากมาก: container หลักเป็นโค้ดใหม่ แต่ migration ยังรันจาก image เก่า
 → schema ไม่ตรงกับโค้ด → พังแบบมีเงื่อนไข (บาง endpoint ใช้ได้ บางอันไม่ได้)
@@ -622,10 +612,13 @@ job `build` จะถูกข้ามไปเลย (`if: ${{ inputs.image-di
 | ลบ Secret ตัวอย่าง | workflow สร้างจาก GitHub Secret ไม่ commit ลง git |
 | `ingressClassName: traefik` | k3s มี Traefik มาให้อยู่แล้ว |
 | requests ลดเหลือ 50m/128Mi | node เดียวมี 2 OCPU ต้องแบ่งให้ระบบด้วย |
-| `NODE_OPTIONS=--max-old-space-size=200` | **Node ไม่รู้จัก container memory limit** ถ้าไม่ตั้ง heap จะโตจนโดน OOMKilled |
 | เพิ่ม `preStop: sleep 5` | ให้ Service ถอด pod ออกก่อนแอปเริ่มปิด — กัน 502 |
 
-**สองข้อสุดท้ายคือสิ่งที่แยก "รันได้" ออกจาก "รันได้ดี"** และเป็นบทเรียนที่มักได้มาจากการเจอปัญหาใน production
+> **ทำไมไม่มีแถว heap tuning แบบสมัย Node แล้ว:** ตอนยังเป็น TypeScript overlay นี้เคยต้องตั้ง `NODE_OPTIONS=--max-old-space-size=200` เพราะ V8 heap ไม่รู้จัก container memory limit เอง ปล่อยไว้เฉย ๆ จะโตจนโดน `OOMKilled`
+> พอย้ายมา Go ปัญหานี้หายไปเลย — Go runtime อ่าน memory limit จาก cgroup ได้เองในระดับที่พอเพียงสำหรับแอปขนาดนี้ ไม่ต้องตั้งอะไรเพิ่ม (ถ้าจะบีบเพิ่มจริง ๆ มี `GOMEMLIMIT` ให้ตั้งได้ แต่ไม่จำเป็นในเคสนี้)
+> ดูคอมเมนต์ในไฟล์จริงที่ `k8s/overlays/cloud/kustomization.yaml`
+
+**`preStop` คือสิ่งที่แยก "รันได้" ออกจาก "รันได้ดี"** และเป็นบทเรียนที่มักได้มาจากการเจอปัญหาใน production
 
 การลบ resource ออกจาก base ทำได้ด้วย `$patch: delete`:
 
@@ -684,10 +677,10 @@ kubeconfig ยังชี้ `127.0.0.1` หรือลืม `--tls-san <PUBL
 ตรวจด้วย `kubectl get ingressclass`
 
 **pod โดน `OOMKilled` ทั้งที่ดูแล้วแรมเหลือ**
-Node heap ไม่รู้จัก container limit → ต้องตั้ง `NODE_OPTIONS=--max-old-space-size` ประมาณ 75-80% ของ limit
+สมัย Node ปัญหานี้ส่วนใหญ่มาจาก V8 heap ไม่รู้จัก container limit ต้องตั้ง `NODE_OPTIONS=--max-old-space-size` เอง — ฝั่ง Go ไม่มีปัญหานี้แล้ว (GC อ่าน limit จาก cgroup ได้เอง) ถ้ายังเจอ OOMKilled ให้สงสัย `resources.limits.memory` ตั้งไว้ต่ำเกินจริง หรือมี goroutine/connection รั่วแทน
 
-**`P1001: Can't reach database server`**
-Neon compute หลับอยู่ ปกติตื่นเองในไม่กี่วินาที ถ้าเจอบ่อยตอน migrate ให้เติม `&connect_timeout=15`
+**`dial tcp: connect: connection refused` / `context deadline exceeded` ตอน migrate ขึ้น Neon**
+Neon compute หลับอยู่ ปกติตื่นเองในไม่กี่วินาที ถ้าเจอบ่อยตอน migrate ให้เติม `&connect_timeout=15` ใน DSN
 
 **e2e ใน GitHub Actions timeout**
 runner มี 2 CPU / 7 GB — ถ้าคลัสเตอร์ช้าให้ลด replica ใน overlay dev เหลือ 1 และเพิ่ม `--timeout`
@@ -748,3 +741,11 @@ package ยังเป็น private หรือ tag ที่ระบุย�
 - [Deploy Hooks — Render Docs](https://render.com/docs/deploy-hooks)
 - [Managed Postgres free tier — Neon FAQ](https://neon.com/faqs/managed-postgres-databases-free-tier)
 - [Koyeb Free Tier 2026](https://www.srvrlss.io/provider/koyeb/)
+
+## 🪛 Playground
+
+- [ ] เลือกทำเส้นทาง 🅲 (k3d ใน CI) ให้จบก่อน — เปิด PR แล้วดูว่า `k8s-e2e.yml` รันครบ 4 ขั้นตอนจริงไหม
+- [ ] ทำ 🅰️ PaaS (Render) ให้ขึ้นจริง แล้วปิด wifi มือถือลองเปิด URL — ยืนยันว่าออกเน็ตได้จริงไม่ใช่แค่ localhost
+- [ ] ตอบให้ได้ก่อนเริ่ม 🅱️: ทำไมองค์กรจริงถึงยอมเสียเวลา 2-3 ชม. ตั้ง k3s เองทั้งที่ PaaS ใช้เวลาแค่ 30 นาที — เขียนเหตุผลสัก 2-3 ข้อ แล้วเทียบกับตาราง §12
+- [ ] จงใจทำให้ deploy พังกลางทาง (เช่น push manifest ที่ผิด schema) แล้วดูว่า pipeline **หยุด** ก่อนถึง production จริงไหม ตามเช็กลิสต์ §14
+- [ ] ลองสลับ `platforms:` ใน `build-push.yml` เหลือ `linux/amd64` อย่างเดียว แล้ว deploy ไป Oracle (ARM) ดู `exec format error` ด้วยตาตัวเอง แล้วแก้กลับ

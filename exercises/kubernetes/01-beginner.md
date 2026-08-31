@@ -40,7 +40,7 @@ minikube addons enable metrics-server
 
 **โจทย์:** ดู log ของ container หลัก และของ initContainer ที่รัน migration
 **คำใบ้:** `kubectl -n todo-app logs <pod>` และ `-c migrate`
-**ผ่านเมื่อ:** เห็นข้อความ prisma migrate ใน log ของ initContainer
+**ผ่านเมื่อ:** เห็นข้อความ golang-migrate ใน log ของ initContainer
 
 ---
 

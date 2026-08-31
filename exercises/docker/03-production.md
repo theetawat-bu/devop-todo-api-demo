@@ -47,14 +47,14 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy image devops-todo-api:local
 ```
 
-**ผ่านเมื่อ:** มีตัวเลขก่อน-หลัง และแยกได้ว่ารายการไหนมาจาก base image รายการไหนมาจาก npm package ของเรา (วิธีแก้คนละแบบ)
+**ผ่านเมื่อ:** มีตัวเลขก่อน-หลัง และแยกได้ว่ารายการไหนมาจาก base image รายการไหนมาจาก Go module ของเรา (วิธีแก้คนละแบบ)
 
 ---
 
 ### D3.6 pin base image ด้วย digest
 
-**โจทย์:** เปลี่ยน `FROM node:22-alpine` เป็นแบบระบุ digest
-**คำใบ้:** `docker inspect --format='{{index .RepoDigests 0}}' node:22-alpine`
+**โจทย์:** เปลี่ยน `FROM golang:1.25-alpine` เป็นแบบระบุ digest
+**คำใบ้:** `docker inspect --format='{{index .RepoDigests 0}}' golang:1.25-alpine`
 **ผ่านเมื่อ:** build ผ่าน และอธิบายได้ว่าทำไม tag เฉย ๆ ถึงไม่ปลอดภัย (คนอื่น push ทับ tag เดิมได้) — พร้อมบอกข้อเสียของการ pin ด้วย (ต้องอัปเดตเองเมื่อมี security patch)
 
 ---
@@ -62,7 +62,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
 ### D3.7 ทดสอบ graceful shutdown ด้วยนาฬิกา
 
 **โจทย์:** วัดเวลาที่ใช้ในการ `docker stop` สองกรณี — มี SIGTERM handler กับไม่มี
-**คำใบ้:** `time docker stop <c>` แล้วลองคอมเมนต์ `process.on('SIGTERM', ...)` ใน `src/index.ts` ออกชั่วคราว
+**คำใบ้:** `time docker stop <c>` แล้วลองคอมเมนต์การจัดการ `signal.Notify(..., syscall.SIGTERM)` ใน `cmd/api/main.go` ออกชั่วคราว
 **ผ่านเมื่อ:** เห็นความต่างชัด (ไม่ถึงวินาที vs รอครบ 10 วิ) แล้วเชื่อมโยงกับ `terminationGracePeriodSeconds` บน k8s ได้
 
 ---

@@ -17,55 +17,55 @@
 ### Stage 1: builder — คอมไพล์
 
 ```dockerfile
-COPY package*.json ./
-RUN npm ci
-COPY prisma ./prisma
-RUN npx prisma generate
-COPY tsconfig.json ./
-COPY src ./src
-RUN npm run build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api
 ```
 
-**ทำไม copy `package*.json` ก่อน แล้วค่อย copy `src`?**
+**ทำไม copy `go.mod go.sum` ก่อน แล้วค่อย copy `cmd`/`internal`?**
 
 นี่คือหัวใจของ layer caching Docker จะ cache layer ไว้และใช้ซ้ำถ้า input ไม่เปลี่ยน
-ถ้าเรา `COPY . .` ทีเดียวตั้งแต่แรก → แก้โค้ด 1 บรรทัด = ทุก layer หลังจากนั้นพัง cache = `npm ci` ใหม่ทุกครั้ง (ช้ามาก)
-แต่แยก copy แบบนี้ → แก้โค้ดไม่กระทบ `package.json` → `npm ci` ใช้ cache เดิม → build เร็วขึ้นหลายเท่า
+ถ้าเรา `COPY . .` ทีเดียวตั้งแต่แรก → แก้โค้ด 1 บรรทัด = ทุก layer หลังจากนั้นพัง cache = `go mod download` ใหม่ทุกครั้ง (ช้ามาก)
+แต่แยก copy แบบนี้ → แก้โค้ดไม่กระทบ `go.mod`/`go.sum` → `go mod download` ใช้ cache เดิม → build เร็วขึ้นหลายเท่า
 
 **หลักจำง่าย: อะไรที่เปลี่ยนน้อย ให้ไว้บน อะไรที่เปลี่ยนบ่อย ให้ไว้ล่าง**
 
-`npm ci` ≠ `npm install`:
-- `npm ci` ติดตั้งตาม `package-lock.json` เป๊ะ ๆ, ลบ `node_modules` เดิมทิ้ง, ไม่แก้ lockfile → **ใช้ใน CI/Docker เสมอ**
-- `npm install` แก้ lockfile ได้ → ใช้ตอน dev
+`CGO_ENABLED=0` สำคัญ: ปิด cgo แล้ว Go จะได้ static binary ตัวเดียวจบ ไม่ต้องพึ่ง libc ของ base image
+ทำให้ก็อปไปรันบน image แทบเปล่า ๆ (เช่น `alpine`, หรือ `scratch`/`distroless`) ได้โดยไม่พัง
 
-### Stage 2: deps — เอาเฉพาะ dependency ของ production
+### golang-migrate CLI — ติดตั้งไว้ใน stage เดียวกัน
 
 ```dockerfile
-RUN npm ci --omit=dev
+RUN CGO_ENABLED=0 go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
 ```
 
-typescript, tsx, @types/* ไม่จำเป็นตอนรันจริง ตัดออกให้ image เล็กลง
+นี่คือของที่แทน `npx prisma migrate deploy` เดิม — ต่างกันตรงที่ไม่ใช่ script ที่รันผ่าน runtime เดียวกับแอป
+แต่เป็น **CLI ไบนารีแยกต่างหาก** ที่รู้จักแค่โฟลเดอร์ `.sql` migration กับ `DATABASE_URL` เท่านั้น
 
-### Stage 3: runner — image ที่ deploy จริง
+### Stage 2: runner — image ที่ deploy จริง
 
 ```dockerfile
-COPY --from=deps    /app/node_modules ./node_modules
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/dist ./dist
+COPY --from=builder /out/api ./api
+COPY --from=builder /go/bin/migrate /usr/local/bin/migrate
+COPY migrations ./migrations
 ```
 
-หยิบเฉพาะของที่ต้องใช้: prod deps + Prisma client ที่ generate แล้ว + โค้ดที่คอมไพล์แล้ว
-**source code, devDependencies, ไฟล์ระหว่างทาง ไม่ติดไปด้วยเลย** — ทั้งเล็กลงและปลอดภัยขึ้น
+หยิบเฉพาะของที่ต้องใช้: binary ที่ compile แล้ว + เครื่องมือ migrate + ไฟล์ migration
+**Go toolchain, source code, module cache ไม่ติดไปด้วยเลย** — ต่างจาก Node ตรงที่ **ไม่มี "production dependencies" ให้แยก stage** เพราะ `go build` รวมทุกอย่างเป็นไบนารีเดียวไปแล้วตั้งแต่ stage แรก (Go จึงใช้ multi-stage แค่ 2 stage ไม่ใช่ 3 แบบที่ Node ต้องมี stage `deps` แยก)
 
-### ทำไมต้อง `USER node`
+### ทำไมต้องสร้าง user เอง
 
 ```dockerfile
-RUN chown -R node:node /app
-USER node
+RUN addgroup -S app && adduser -S -G app -u 1000 app
+RUN chown -R app:app /app
+USER app
 ```
 
 default ของ container คือรันเป็น root ถ้าคนแฮกเข้ามาได้ ก็ได้ root ไปเลย
-`USER node` ลดความเสียหายลงมาก และเป็นเงื่อนไขบังคับของ `runAsNonRoot: true` ใน k8s manifest ของเรา
+`golang:*-alpine`/`alpine` ไม่มี user สำเร็จรูปมาให้เหมือน `node:*-alpine` (ที่มี `node` user ในตัว) เลยต้องสร้างเอง
+ผลลัพธ์เดียวกัน: ลดความเสียหายลงมาก และเป็นเงื่อนไขบังคับของ `runAsNonRoot: true` ใน k8s manifest ของเรา
 
 ### HEALTHCHECK
 
@@ -79,9 +79,11 @@ Docker จะยิงเช็คเองแล้วรายงานสถ�
 
 ### `.dockerignore` สำคัญกว่าที่คิด
 
-ไฟล์นี้กัน `node_modules`, `.git`, `.env` ไม่ให้ถูกส่งเข้า build context
-- ถ้าไม่กัน `node_modules` → ส่งไฟล์เป็นแสนเข้า daemon ทุกครั้ง (ช้า) แถมทับ `node_modules` ที่ติดตั้งใน image (ผิด platform)
+ไฟล์นี้กัน `.git`, `.env`, `docs`, `exercises` ไม่ให้ถูกส่งเข้า build context
+- ถ้าไม่กัน ไฟล์พวกนี้ → build context ใหญ่โดยไม่จำเป็น ส่งช้าทุกครั้งที่ `docker build`
 - ถ้าไม่กัน `.env` → **ความลับหลุดเข้าไปอยู่ใน image**
+
+(Go ไม่มีปัญหาแบบ `node_modules` เพราะไม่มีโฟลเดอร์ dependency ที่ก็อปลงเครื่องแบบนั้น — module cache อยู่นอก build context อยู่แล้ว)
 
 ## คำสั่งที่ต้องคล่อง
 
@@ -103,8 +105,8 @@ docker system prune -af             # เก็บกวาดของที่
 ```bash
 docker build -t t1 .                       # ครั้งแรก ช้า
 docker build -t t1 .                       # ครั้งสอง เร็วมาก (CACHED ทุก layer)
-echo "// x" >> src/index.ts
-docker build -t t1 .                       # เร็วอยู่ — เพราะ npm ci ยัง CACHED
+echo "// x" >> cmd/api/main.go
+docker build -t t1 .                       # เร็วอยู่ — เพราะ go mod download ยัง CACHED
 ```
 
 สังเกตคำว่า `CACHED` ในผลลัพธ์ นั่นแหละคือเหตุผลที่ต้องเรียงคำสั่งให้ถูก
@@ -160,27 +162,31 @@ manifest list เป็นแนวคิดของ registry — เก็บ�
 **ตัวแปรอัตโนมัติที่ BuildKit ให้มา:**
 
 ```dockerfile
-FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 ARG TARGETPLATFORM   # เช่น linux/arm64  — เครื่องปลายทาง
-ARG BUILDPLATFORM    # เช่น linux/amd64  — เครื่องที่ build
+ARG TARGETOS
+ARG TARGETARCH
 RUN echo "build บน $BUILDPLATFORM เพื่อไปรันบน $TARGETPLATFORM"
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/api ./cmd/api
 ```
 
-เทคนิคขั้นสูง: ให้ stage `builder` รันบน `$BUILDPLATFORM` (เร็ว ไม่ต้องจำลอง) แล้วให้เฉพาะ stage สุดท้ายเป็น arch ปลายทาง
-สำหรับ Node ที่ผลลัพธ์เป็น JavaScript ล้วน วิธีนี้ประหยัดเวลาได้มาก
+เทคนิคขั้นสูง: ให้ stage `builder` รันบน `$BUILDPLATFORM` เสมอ (เร็ว ไม่ต้องจำลองด้วย QEMU) แล้วสั่ง Go
+**cross-compile** ไปเป็น arch ปลายทางด้วย `GOOS`/`GOARCH` — วิธีนี้ตัด QEMU ออกจาก build ทั้งหมด เร็วกว่าเดิมมาก
+Go ทำ cross-compile ได้ในตัวโดยไม่ต้องติดตั้งอะไรเพิ่ม (ต่างจาก Node ที่ผลลัพธ์เป็น JS ตีความตอนรัน จึงไม่มีแนวคิด cross-compile แบบนี้ — แต่ก็ไม่มีปัญหา arch เพราะ JS ไม่ผูกกับ CPU)
+`TARGETOS`/`TARGETARCH` เป็นตัวแปรที่ BuildKit generate ให้อัตโนมัติจาก `TARGETPLATFORM` ไม่ต้อง parse เอง
 
 ---
 
 ## X3. ARG มีขอบเขตแค่ไหน — จุดที่คนพลาดบ่อย
 
 ```dockerfile
-ARG NODE_VERSION=22            # ← ก่อน FROM = global แต่ใช้ได้เฉพาะในบรรทัด FROM
-FROM node:${NODE_VERSION}-alpine AS builder
-RUN echo $NODE_VERSION         # ← ว่าง! ต้องประกาศซ้ำในแต่ละ stage
+ARG GO_VERSION=1.25            # ← ก่อน FROM = global แต่ใช้ได้เฉพาะในบรรทัด FROM
+FROM golang:${GO_VERSION}-alpine AS builder
+RUN echo $GO_VERSION           # ← ว่าง! ต้องประกาศซ้ำในแต่ละ stage
 
-FROM node:${NODE_VERSION}-alpine AS runner
-ARG NODE_VERSION               # ← ประกาศซ้ำ (ไม่ต้องใส่ค่า) ถึงจะใช้ได้
-RUN echo $NODE_VERSION         # 22
+FROM alpine:3.20 AS runner
+ARG GO_VERSION                 # ← ประกาศซ้ำ (ไม่ต้องใส่ค่า) ถึงจะใช้ได้
+RUN echo $GO_VERSION           # 1.25
 ```
 
 **กฎ 3 ข้อ:**
@@ -230,5 +236,15 @@ jq -r '."containerimage.digest"' /tmp/meta.json
 ซึ่งเป็นค่าที่ `build-push.yml` ส่งกลับออกไปให้ job deploy ใช้
 
 ---
+
+## 🪛 Playground
+
+ลองเล่นก่อนไปบทถัดไป:
+
+- [ ] `docker images` เทียบขนาด `devops-todo-api:local` กับ `golang:1.25-alpine` เปล่า ๆ — ต่างกันเท่าไร
+- [ ] ลบบรรทัด `CGO_ENABLED=0` ออกแล้ว build ใหม่ ดูว่า binary ใหญ่ขึ้น/เปลี่ยนไปยังไง (`docker history`)
+- [ ] แก้ `internal/todos/handler.go` แล้ว build ซ้ำ 2 ครั้งติดกัน — layer ไหน CACHED บ้าง
+- [ ] ลองสลับลำดับ `COPY go.mod go.sum` กับ `COPY cmd ./cmd` ดูว่า cache พังไหม
+- [ ] `docker run --rm -it --entrypoint sh devops-todo-api:local` เข้าไปดูว่าใน image มีไฟล์อะไรบ้าง (ไม่มี source code ติดไปเลย)
 
 ➡️ ต่อไป: [04 — Docker Compose](04-docker-compose.md)

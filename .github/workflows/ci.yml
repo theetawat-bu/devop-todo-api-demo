@@ -35,24 +35,23 @@ jobs:
           --health-interval 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://app:app_password@localhost:5432/tododb?schema=public
+      DATABASE_URL: postgresql://app:app_password@localhost:5432/tododb?sslmode=disable
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v5
         with:
-          node-version: "22"
-          cache: "npm"
+          go-version: "1.25"
 
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npx prisma migrate deploy
+      - run: go build -o api ./cmd/api
+      - run: go vet ./...
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
+      - run: migrate -path migrations -database "$DATABASE_URL" up
 
       - name: Smoke test
         run: |
-          node dist/index.js &
+          ./api &
           for i in $(seq 1 20); do curl -fsS localhost:3000/healthz && break; sleep 1; done
           curl -fsS localhost:3000/readyz
           curl -fsS -X POST localhost:3000/api/todos \
@@ -110,8 +109,8 @@ jobs:
           echo "USER = '$user'"
           test -n "$user" || { echo "::error::image รันเป็น root — k8s ที่ตั้ง runAsNonRoot จะไม่ยอมสตาร์ท"; exit 1; }
 
-  practices:
-    name: ทดสอบ best practices ของ Dockerfile
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "ตรวจสอบ best practices ของ Dockerfile"
+  # practices:
+  #   name: ทดสอบ best practices ของ Dockerfile
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: echo "ตรวจสอบ best practices ของ Dockerfile"

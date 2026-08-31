@@ -46,7 +46,7 @@
 ### N5.4 mTLS ระหว่าง proxy กับ backend
 
 **โจทย์:** ให้ backend รับเฉพาะ connection ที่มี client certificate ที่ถูกต้อง
-**คำใบ้:** สร้าง CA เอง → ออก cert ให้ nginx → ตั้ง `proxy_ssl_certificate` → ฝั่ง Node ใช้ `https.createServer({ requestCert: true, ca })`
+**คำใบ้:** สร้าง CA เอง → ออก cert ให้ nginx → ตั้ง `proxy_ssl_certificate` → ฝั่ง Go ใช้ `crypto/tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: caPool}` ส่งเข้า `http.Server.TLSConfig`
 **ผ่านเมื่อ:** ยิงตรงไปที่ backend โดยไม่มี cert แล้วถูกปฏิเสธ แต่ผ่าน nginx แล้วใช้ได้ปกติ
 
 ---
