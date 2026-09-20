@@ -57,8 +57,10 @@ jobs:
       # ---- เชื่อมเข้าเครือข่ายส่วนตัวของคลัสเตอร์ ----
       # แนะนำให้ใช้ Tailscale แทนการเปิด port 6443 ออกอินเทอร์เน็ต (ดู docs/10 หัวข้อความปลอดภัย)
       - name: เชื่อม Tailscale
-        if: ${{ secrets.TS_OAUTH_CLIENT_ID != '' }}
+        if: ${{ env.TS_OAUTH_CLIENT_ID != '' }}
         uses: tailscale/github-action@v3
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
