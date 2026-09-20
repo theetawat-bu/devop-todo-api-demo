@@ -41,13 +41,26 @@ curl -X DELETE http://localhost:3000/api/todos/1 -i
 
 ## คำสั่งที่ใช้บ่อย
 
-| คำสั่ง | ทำอะไร |
-|---|---|
-| `go run ./cmd/api` | รันจาก source ตรง ๆ (คอมไพล์ทุกครั้งที่รัน) |
-| `go vet ./...` | ตรวจโค้ดหา bug ที่ compiler จับไม่ได้ — CI ใช้ตัวนี้ |
-| `go build -o api ./cmd/api` | คอมไพล์เป็น binary |
-| `./api` | รัน binary ที่ build แล้ว (โหมด production) |
+| คำสั่ง                                         | ทำอะไร                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `go run ./cmd/api`                             | รันจาก source ตรง ๆ (คอมไพล์ทุกครั้งที่รัน)                                                                                                             |
+| `go vet ./...`                                 | ตรวจโค้ดหา bug ที่ compiler จับไม่ได้ — CI ใช้ตัวนี้                                                                                                    |
+| `go build -o api ./cmd/api`                    | คอมไพล์เป็น binary                                                                                                                                      |
+| `./api`                                        | รัน binary ที่ build แล้ว (โหมด production)                                                                                                             |
 | `docker compose exec db psql -U app -d tododb` | เปิด psql ดู/แก้ข้อมูลใน DB (ไม่มี GUI แบบ Prisma Studio ในตัว — ใช้ [TablePlus](https://tableplus.com/)/[DBeaver](https://dbeaver.io/) ถ้าอยากได้ GUI) |
+
+### `go mod download` vs `go mod tidy`
+
+สองคำสั่งนี้มักสับสนกันเพราะทั้งคู่เกี่ยวกับ dependency แต่ทำหน้าที่คนละอย่าง:
+
+| คำสั่ง | ทำอะไร | แก้ `go.mod`/`go.sum` ไหม |
+| --- | --- | --- |
+| `go mod download` | ดาวน์โหลด module ที่ **มีอยู่แล้ว** ใน `go.mod`/`go.sum` ลง local cache (`$GOPATH/pkg/mod`) | ไม่แก้ |
+| `go mod tidy` | สแกน import ในโค้ดจริงทั้งโปรเจกต์ แล้วเพิ่ม dependency ที่ขาด/ลบตัวที่ไม่ใช้แล้วออกจาก `go.mod`, อัปเดต `go.sum` ให้ครบ | แก้ |
+
+ใช้ `go mod download` ตอนแค่อยากเตรียม dependency ไว้ก่อนรัน/build (ตามขั้นตอนด้านบน) หรือ warm-up cache ใน Docker layer — เดายังไงก็ไม่แก้ไฟล์ `go.mod`
+
+ใช้ `go mod tidy` ทุกครั้งที่เพิ่ม/ลบ import ในโค้ด เช่นหลัง `go get <package>` เพื่อให้ `go.mod`/`go.sum` sync กับโค้ดจริง — ถ้าลืมรัน CI อาจฟ้อง `missing go.sum entry` (ดู [12](12-troubleshooting.md))
 
 ## golang-migrate ที่ต้องเข้าใจ 3 คำสั่ง
 
@@ -75,20 +88,26 @@ migrate create -ext sql -dir migrations -seq add_priority
 
 ## เรื่อง environment variable
 
-`internal/config/config.go` อ่านค่าแล้ว **โยน error ทันทีถ้าไม่มี `DATABASE_URL`**
-นี่เป็น pattern ที่ดีเรียกว่า *fail fast* — แอปตายตั้งแต่ boot ดีกว่าไปตายตอนมี request จริง
+`internal/config/config.go` เรียก [`godotenv.Load()`](https://github.com/joho/godotenv) ก่อนอ่านค่าใด ๆ — โหลด `.env` ในโฟลเดอร์ปัจจุบันเข้ามาเป็น environment variable ให้อัตโนมัติ **ไม่ต้อง `export` เอง**
+ถ้าไม่เจอไฟล์ `.env` เลย (เช่นใน container ที่ prod ไม่ได้ copy ไฟล์นี้เข้าไป) จะไม่ error เพราะ prod ตั้ง env vars จริงผ่าน compose/k8s แทนอยู่แล้ว
+
+หลังจากนั้นจะอ่านค่าแล้ว **โยน error ทันทีถ้าไม่มี `DATABASE_URL`**
+นี่เป็น pattern ที่ดีเรียกว่า _fail fast_ — แอปตายตั้งแต่ boot ดีกว่าไปตายตอนมี request จริง
 (บน k8s pod จะเข้า `CrashLoopBackOff` ให้เห็นเลยว่าตั้งค่าผิด)
 
 `DATABASE_URL` ต่างกันตามที่รัน:
 
-| รันที่ไหน | host ใน DATABASE_URL |
-|---|---|
-| เครื่องตัวเอง (`go run ./cmd/api`) | `localhost` |
-| ใน docker compose | `db` (ชื่อ service) |
-| ใน Kubernetes | `postgres` (ชื่อ Service) |
+| รันที่ไหน                          | host ใน DATABASE_URL      |
+| ---------------------------------- | ------------------------- |
+| เครื่องตัวเอง (`go run ./cmd/api`) | `localhost`               |
+| ใน docker compose                  | `db` (ชื่อ service)       |
+| ใน Kubernetes                      | `postgres` (ชื่อ Service) |
 
 จำหลักไว้: **ใน container network ให้ใช้ชื่อ service เป็น hostname เสมอ ไม่ใช่ localhost**
 (`localhost` ใน container หมายถึงตัว container นั้นเอง)
+
+⚠️ **`.env.example` (และ `.env` ที่ copy มา) ตั้ง host เป็น `db`** เพราะออกแบบไว้ให้รันผ่าน `docker compose up` เป็นหลัก (ดู [04](04-docker-compose.md))
+ถ้าจะรัน `go run ./cmd/api` ตรงจากเครื่องตามขั้นตอนด้านบนจริง ๆ ต้องแก้ `DATABASE_URL` ใน `.env` ให้เป็น `localhost` เอง ไม่งั้นจะเจอ `lookup db: no such host` (ดู [12](12-troubleshooting.md))
 
 อีกจุดที่ต้องระวัง: `sslmode` ต้องตรงกับปลายทาง — DB ในเครื่อง/compose/k8s (ไม่เปิด TLS) ต้องมี `?sslmode=disable`
 ส่วน DB บน cloud อย่าง Neon (บังคับ TLS) ต้องมี `?sslmode=require` — ใส่ผิดฝั่งแล้วต่อ DB ไม่ติดทั้งคู่ (ดู [12](12-troubleshooting.md))

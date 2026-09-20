@@ -64,9 +64,9 @@ named volume ทำให้ข้อมูล Postgres อยู่นอก co
 
 ```yaml
 api:
-  expose: ["3000"]      # เห็นเฉพาะใน network ภายใน
+  expose: ["3000"] # เห็นเฉพาะใน network ภายใน
 nginx:
-  ports: ["8080:80"]    # เปิดออกสู่เครื่องเรา (host:container)
+  ports: ["8080:80"] # เปิดออกสู่เครื่องเรา (host:container)
 ```
 
 จงใจไม่ publish port ของ api เพื่อบังคับให้ traffic ผ่าน nginx เท่านั้น — เป็นแพตเทิร์นเดียวกับ production

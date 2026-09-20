@@ -49,6 +49,7 @@ curl http://localhost:8080/api/todos
 | 11 | [Enterprise GitOps](docs/11-enterprise-gitops.md) | 🏢 GitHub Actions → Harbor → Argo CD → private cloud หลัง VPN |
 | 12 | [แก้ปัญหาที่เจอบ่อย](docs/12-troubleshooting.md) | error ยอดฮิตของแต่ละหัวข้อ |
 | 13 | [อ่านสคริปต์ deploy](docs/13-reading-scripts.md) | 🔍 **อ่าน workflow + bash ทีละบรรทัด** — `curl -f`, retry loop, `if:`, outputs |
+| 14 | [Deploy Quickstart](docs/14-deploy-quickstart.md) | ⚡ **คู่มือทำตามล้วน ๆ ไม่มีทฤษฎี** — CI/CD → Docker → ขึ้น cloud ฟรีจริง (PaaS + Kubernetes) |
 
 > **จะทำ [10 — deploy ขึ้น cloud](docs/10-deploy-free-cloud.md) ต้องรู้อะไรก่อน?**
 > ดูตารางความรู้ที่ต้องมี + แบบทดสอบตัวเอง 8 ข้อ ที่[หัวข้อ 0 ของ docs/10](docs/10-deploy-free-cloud.md)

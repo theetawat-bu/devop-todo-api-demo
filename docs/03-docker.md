@@ -24,16 +24,43 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api
 ```
 
+### `COPY go.mod go.sum ./` — อ่านทีละ parameter
+
+รูปแบบทั่วไปของ `COPY` คือ `COPY <src...> <dest>` — พารามิเตอร์ตัวสุดท้ายเสมอคือปลายทาง ตัวก่อนหน้าคือไฟล์ต้นทาง (จะมีกี่ตัวก็ได้):
+
+```dockerfile
+COPY go.mod go.sum ./
+#    ^^^^^^ ^^^^^^ ^^
+#    src 1  src 2  dest
+```
+
+| ตำแหน่ง | ค่า | ความหมาย |
+| --- | --- | --- |
+| src 1 | `go.mod` | ไฟล์ประกาศชื่อ module + list dependency ตรง ๆ ที่โค้ดใช้ — อยู่ที่ root ของ build context (โฟลเดอร์ที่รัน `docker build .`) บนเครื่อง host |
+| src 2 | `go.sum` | ไฟล์ checksum ของทุก dependency (รวม indirect) ใช้ยืนยันว่าโหลดมาไม่ถูกแก้ไข — คู่กับ `go.mod` เสมอ |
+| dest | `./` | ปลายทางในตัว container นี้ ตรงกับ `WORKDIR /app` ที่ประกาศไว้ด้านบน (บรรทัดที่ 3) ดังนั้น `./` ที่นี่คือ `/app` — ผลคือได้ `/app/go.mod` และ `/app/go.sum` |
+
+ถ้าอยากส่งไฟล์เดียวก็เขียนแค่ `COPY go.mod ./`; ถ้าจะรับทั้งโฟลเดอร์เข้ามาแบบ `COPY internal ./internal` — src เป็นโฟลเดอร์ก็ copy ทั้งโฟลเดอร์นั้นเข้าไปในปลายทาง
+
 **ทำไม copy `go.mod go.sum` ก่อน แล้วค่อย copy `cmd`/`internal`?**
 
-นี่คือหัวใจของ layer caching Docker จะ cache layer ไว้และใช้ซ้ำถ้า input ไม่เปลี่ยน
-ถ้าเรา `COPY . .` ทีเดียวตั้งแต่แรก → แก้โค้ด 1 บรรทัด = ทุก layer หลังจากนั้นพัง cache = `go mod download` ใหม่ทุกครั้ง (ช้ามาก)
-แต่แยก copy แบบนี้ → แก้โค้ดไม่กระทบ `go.mod`/`go.sum` → `go mod download` ใช้ cache เดิม → build เร็วขึ้นหลายเท่า
+นี่คือหัวใจของ layer caching Docker จะ cache layer ไว้และใช้ซ้ำถ้า input ไม่เปลี่ยน (Docker เช็คว่า input เปลี่ยนไหมโดยเทียบ hash ของไฟล์ที่ `COPY` เข้ามา — ถ้า `go.mod`/`go.sum` ไบต์ต่อไบต์เหมือนเดิม layer นั้นและทุก layer ถัดไปที่ยังไม่เจอ input ใหม่จะถูก cache ไว้)
+
+ถ้าเรา `COPY . .` ทีเดียวตั้งแต่แรก → แก้โค้ด 1 บรรทัดในไฟล์ไหนก็ตาม = hash ของ input เปลี่ยน = ทุก layer หลังจากนั้นพัง cache = `go mod download` ใหม่ทุกครั้ง (ช้ามาก เพราะต้องโหลด dependency ทั้งหมดซ้ำทั้งที่ dependency ไม่ได้เปลี่ยนเลย)
+แต่แยก copy แบบนี้ → แก้โค้ดใน `cmd`/`internal` ไม่กระทบไฟล์ `go.mod`/`go.sum` → layer `COPY go.mod go.sum ./` และ `RUN go mod download` ยังคง hash เดิม → ใช้ cache เดิม → build เร็วขึ้นหลายเท่า (ดู proof จริงที่หัวข้อ "ลองพิสูจน์เรื่อง cache" ด้านล่าง)
 
 **หลักจำง่าย: อะไรที่เปลี่ยนน้อย ให้ไว้บน อะไรที่เปลี่ยนบ่อย ให้ไว้ล่าง**
 
-`CGO_ENABLED=0` สำคัญ: ปิด cgo แล้ว Go จะได้ static binary ตัวเดียวจบ ไม่ต้องพึ่ง libc ของ base image
-ทำให้ก็อปไปรันบน image แทบเปล่า ๆ (เช่น `alpine`, หรือ `scratch`/`distroless`) ได้โดยไม่พัง
+### `RUN CGO_ENABLED=0 go build ...` คืออะไร
+
+`CGO_ENABLED` เป็น environment variable ที่ Go toolchain อ่านตอน build (ใส่หน้าคำสั่งแบบนี้ = ตั้งค่าเฉพาะ command นั้นบรรทัดเดียว ไม่ persist ไปบรรทัดอื่น)
+
+- **cgo คืออะไร:** กลไกที่ให้โค้ด Go เรียกไลบรารี C ได้ (เช่นบาง driver ฐานข้อมูล หรือ `net` package บางฟังก์ชันที่ใช้ resolver ของ OS) ถ้าเปิดไว้ (`CGO_ENABLED=1`, เป็นค่า default บนเครื่องที่มี C compiler) binary ที่ได้จะ **dynamically link** กับ `libc` ของระบบที่ build อยู่
+- **`CGO_ENABLED=0` ปิดกลไกนี้ทั้งหมด** → Go compiler ใช้ implementation ล้วน ๆ ที่เป็น Go เอง (pure Go) แทนทุกจุดที่เคยพึ่ง C → ผลลัพธ์คือ **static binary** ตัวเดียว ที่มีทุกอย่างรวมอยู่ในไฟล์ (runtime, garbage collector, dependency ที่ import ทั้งหมด) ไม่ต้องพึ่ง shared library ใด ๆ จากระบบที่จะเอาไปรัน
+
+**ทำไมเรื่องนี้ถึงสำคัญกับ multi-stage build:** stage `builder` ใช้ `golang:1.25-alpine` (มี toolchain เต็ม, หนัก) แต่ stage `runner` ใช้ `alpine:3.20` เปล่า ๆ (ไม่มี Go, และ libc ของ alpine คือ `musl` ไม่ใช่ `glibc` แบบ distro อื่น) ถ้า binary ที่ build มาดัน dynamic-link กับ `glibc` ของ builder image เอาไปวางใน `alpine` runner ที่ไม่มี `glibc` จะรันไม่ขึ้นทันที (`exec format error` หรือ error หา shared library ไม่เจอ) การปิด cgo ตัดปัญหานี้ทิ้งไปเลย — เอาไฟล์เดียวไปวางบน base image ไหนก็รันได้ ถึงขั้นใช้ `scratch` (image เปล่าสนิท ไม่มี OS อะไรเลย) ก็ยังรันได้
+
+ผลข้างเคียงที่เห็นชัด: ลองดูด้วยตาได้จาก 🪛 Playground ด้านล่าง (ลบ `CGO_ENABLED=0` ออกแล้วเทียบขนาด binary ด้วย `docker history`)
 
 ### golang-migrate CLI — ติดตั้งไว้ใน stage เดียวกัน
 
@@ -52,8 +79,29 @@ COPY --from=builder /go/bin/migrate /usr/local/bin/migrate
 COPY migrations ./migrations
 ```
 
-หยิบเฉพาะของที่ต้องใช้: binary ที่ compile แล้ว + เครื่องมือ migrate + ไฟล์ migration
-**Go toolchain, source code, module cache ไม่ติดไปด้วยเลย** — ต่างจาก Node ตรงที่ **ไม่มี "production dependencies" ให้แยก stage** เพราะ `go build` รวมทุกอย่างเป็นไบนารีเดียวไปแล้วตั้งแต่ stage แรก (Go จึงใช้ multi-stage แค่ 2 stage ไม่ใช่ 3 แบบที่ Node ต้องมี stage `deps` แยก)
+**`COPY --from=builder` คืออะไร ทำไมต้องมี**
+
+`COPY` ปกติ (ที่เห็นใน stage 1) ก็อปไฟล์จาก **build context บนเครื่อง host** (โฟลเดอร์ที่รัน `docker build .`) เข้ามาใน image ที่กำลังสร้าง
+แต่ `COPY --from=builder` เปลี่ยนต้นทางเป็น **filesystem ของ stage อื่นที่ build เสร็จไปแล้ว** — ในที่นี้คือ stage ที่ตั้งชื่อว่า `builder` (มาจาก `FROM golang:1.25-alpine AS builder` บรรทัดที่ 2 ของ Dockerfile) นี่คือ flag ที่ทำให้ **multi-stage build** เป็นไปได้: มีหลาย `FROM` ในไฟล์เดียว แต่หยิบผลลัพธ์บางส่วนจาก stage ก่อนหน้าข้ามมาโดยไม่ต้องเอาทั้ง stage นั้นติดไปด้วย
+
+แยกพารามิเตอร์ของบรรทัด `COPY --from=builder /out/api ./api`:
+
+| ตำแหน่ง | ค่า | ความหมาย |
+| --- | --- | --- |
+| flag | `--from=builder` | บอกว่า src ต่อไปนี้ไม่ได้มาจาก host แต่มาจาก filesystem ของ stage ชื่อ `builder` (จะใช้เลข index อย่าง `--from=0` ก็ได้ แต่ตั้งชื่อด้วย `AS` แล้วอ้างชื่อจะอ่านง่ายกว่า) |
+| src | `/out/api` | path **ภายใน stage builder** — ตรงกับที่ `RUN go build -o /out/api ./cmd/api` เขียนไฟล์ binary ไว้ (บรรทัดที่ 11 ของ Dockerfile) |
+| dest | `./api` | path ปลายทางใน stage `runner` ปัจจุบัน เทียบกับ `WORKDIR /app` จึงกลายเป็น `/app/api` |
+
+บรรทัดถัดมา `COPY --from=builder /go/bin/migrate /usr/local/bin/migrate` หลักการเดียวกัน: `/go/bin/migrate` คือที่ที่ `go install` (บรรทัดที่ 14) วางไบนารี `migrate` ไว้ในสมัยที่ยังอยู่ stage `builder` (ค่า default ของ `$GOPATH/bin` ใน image `golang:*`) แล้วก็อปมาวางไว้ที่ `/usr/local/bin/migrate` ใน stage `runner` (อยู่ใน `$PATH` อยู่แล้ว เรียก `migrate` เฉย ๆ จากตรงไหนก็ได้โดยไม่ต้องพิมพ์ path เต็ม)
+
+ส่วน `COPY migrations ./migrations` ไม่มี `--from` เพราะโฟลเดอร์ `migrations/` เป็นไฟล์ `.sql` ที่เขียนเองอยู่ใน source code ตรง ๆ — ไม่เคยผ่านการ build เลย เลยก็อปจาก host (build context) ตามปกติเหมือน stage แรก
+
+**ทำไมต้องแยกเป็น 2 stage แล้วก๊อปข้ามแบบนี้ แทนที่จะ build ใน image เดียวจบ:**
+
+หยิบเฉพาะของที่ต้องใช้จริงตอนรัน: binary ที่ compile แล้ว + เครื่องมือ migrate + ไฟล์ migration
+**Go toolchain (compiler, ตัว `go` เอง), source code, module cache ไม่ติดไปด้วยเลย** เพราะสิ่งเหล่านี้อยู่ใน stage `builder` ซึ่งไม่ใช่ stage สุดท้าย — Docker เก็บ image สุดท้ายจากเฉพาะ stage ที่ชื่อ/ตำแหน่งท้ายสุด (`runner`) ส่วน stage `builder` ทั้งก้อนจะถูกทิ้งไป เหลือแค่ไฟล์ที่ถูก `COPY --from=builder` หยิบออกมาเท่านั้น
+
+ผลคือ image สุดท้ายเล็กลงมาก (ไม่มี Go toolchain ที่หนักหลายร้อย MB) และมี attack surface น้อยลง (ไม่มี compiler/source code ให้คนที่เจาะเข้ามาใช้ประโยชน์) — ต่างจาก Node ตรงที่ **ไม่มี "production dependencies" ให้แยก stage** เพราะ `go build` รวมทุกอย่างเป็นไบนารีเดียวไปแล้วตั้งแต่ stage แรก (Go จึงใช้ multi-stage แค่ 2 stage ไม่ใช่ 3 แบบที่ Node ต้องมี stage `deps` แยก)
 
 ### ทำไมต้องสร้าง user เอง
 

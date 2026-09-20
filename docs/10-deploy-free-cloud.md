@@ -290,7 +290,7 @@ git push -u origin feature/test-e2e
 
 1. สมัครที่ [render.com](https://render.com) ด้วย GitHub
 2. **New +** → **Web Service** → แท็บ **Existing Image**
-3. Image URL: `ghcr.io/<ชื่อคุณ>/devops-todo-api:dev`
+3. Image URL: `ghcr.io/<ชื่อคุณ>/devops-todo-api:dev` — รูปแบบเต็มคือ `ghcr.io/<owner>/<repo>:<tag>` มาจากชื่อ repo บน GitHub จริง (ตัวพิมพ์เล็กทั้งหมด) ไม่ต้องเดา ให้เข้าไปดู tag ที่มีจริงที่แท็บ **Packages** ของ repo (ต้อง push ให้ CI build-push รันผ่านอย่างน้อย 1 ครั้งก่อน — ดู [14-deploy-quickstart](14-deploy-quickstart.md#a2-สร้าง-web-service-บน-render) สำหรับขั้นตอนละเอียด)
 4. Instance Type: **Free**, Region: Singapore
 5. Environment Variables:
 

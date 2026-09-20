@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -15,6 +17,9 @@ type Config struct {
 // pattern นี้เรียกว่า fail fast — แอปตายตั้งแต่ boot ดีกว่าไปตายตอนมี request จริง
 // (บน k8s pod จะเข้า CrashLoopBackOff ให้เห็นเลยว่าตั้งค่าผิด)
 func Load() (Config, error) {
+	// โหลด .env ถ้ามี (dev only) — ไม่ error ถ้าไฟล์ไม่มี เพราะ prod ตั้ง env จริงแทน
+	_ = godotenv.Load()
+
 	cfg := Config{
 		Port:        envOr("PORT", "3000"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),

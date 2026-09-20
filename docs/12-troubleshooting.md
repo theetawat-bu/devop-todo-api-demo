@@ -10,6 +10,10 @@
 ต่อ DB ผิด host — ใน container `localhost` คือตัว container เอง
 ใช้ `db` (compose) หรือ `postgres` (k8s) เป็น hostname
 
+**`lookup db: no such host` / `lookup postgres: no such host`**
+กลับกันกับข้อบน — รัน `go run ./cmd/api` **ตรงจากเครื่อง** (นอก container) แต่ `DATABASE_URL` ใน `.env` ยังตั้ง host เป็น `db`/`postgres`
+ชื่อ service แบบนี้ resolve ได้แค่ในวง network ของ docker compose/k8s เท่านั้น ถ้ารันนอก container ให้แก้ `.env` ใช้ `localhost` แทน (ดู [02](02-local-development.md)) หรือรันผ่าน `docker compose up` ทั้งชุดแทน
+
 **`pq: SSL is not enabled on the server`**
 DSN ไม่ได้ใส่ `?sslmode=disable` ตอนต่อ Postgres ในเครื่อง/compose/k8s (ที่ไม่ได้เปิด TLS)
 ตัวอย่าง: `postgresql://app:app_password@db:5432/tododb?sslmode=disable`
@@ -74,6 +78,24 @@ migrate -path migrations -database "postgresql://...@ep-xxx.ap-southeast-1.aws.n
 
 **ติดตั้งบนเครื่องแล้ว `migrate: command not found`**
 `go install` ไม่ได้เติม `$GOPATH/bin` เข้า `$PATH` → เช็คด้วย `go env GOPATH` แล้วเติม `export PATH=$PATH:$(go env GOPATH)/bin`
+
+**`database driver: unknown driver postgres(ql) (forgotten import?)`**
+
+ตัว `migrate` CLI เป็น binary ที่ต้อง **compile พร้อม build tag ระบุ driver** ตั้งแต่ตอนติดตั้ง ถ้าใช้คำสั่งติดตั้งแบบเปล่า ๆ (ไม่ใส่ `-tags`) จะได้ binary ที่ไม่มี database driver ติดมาเลย — เช็คได้จาก `migrate -help` แล้วดูบรรทัดท้ายสุด:
+
+```bash
+migrate -help
+# Source drivers: file
+# (ถ้าไม่มีบรรทัด "Database drivers: ..." ต่อท้าย = ไม่มี driver ติดมาเลย)
+```
+
+วิธีแก้ — ติดตั้งใหม่โดยใส่ `-tags 'postgres'`:
+
+```bash
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```
+
+ติดตั้งเสร็จแล้วเช็คอีกครั้งต้องเห็น `Database drivers: stub, postgres, postgresql` — ตอนนี้ใช้ได้ทั้ง `postgres://...` และ `postgresql://...` ใน `-database`
 
 **cross-compile แล้วรันไม่ได้ / `exec format error`**
 build บนเครื่องหนึ่ง (เช่น Mac arm64) แล้วเอาไปรันบน server อีก arch (เช่น amd64) โดยไม่ตั้ง `GOOS`/`GOARCH`

@@ -44,15 +44,15 @@ Client
 
 จะเห็นว่าหน้าที่เดิม ๆ ถูกย้ายไปคนละที่:
 
-| หน้าที่ | Compose | Kubernetes |
-|---|---|---|
-| รับ traffic เข้า | nginx container | Ingress |
-| Load balance | nginx upstream | Service (kube-proxy) |
-| Restart เมื่อแอปพัง | `restart: unless-stopped` | livenessProbe |
-| ไม่ส่ง traffic ตอนยังไม่พร้อม | `depends_on: healthy` | readinessProbe |
-| เก็บข้อมูล DB | named volume | PVC / volumeClaimTemplates |
-| ตั้งค่า / ความลับ | `.env` | ConfigMap / Secret |
-| เพิ่มจำนวน instance | `deploy.replicas` | `spec.replicas` + HPA |
+| หน้าที่                       | Compose                   | Kubernetes                 |
+| ----------------------------- | ------------------------- | -------------------------- |
+| รับ traffic เข้า              | nginx container           | Ingress                    |
+| Load balance                  | nginx upstream            | Service (kube-proxy)       |
+| Restart เมื่อแอปพัง           | `restart: unless-stopped` | livenessProbe              |
+| ไม่ส่ง traffic ตอนยังไม่พร้อม | `depends_on: healthy`     | readinessProbe             |
+| เก็บข้อมูล DB                 | named volume              | PVC / volumeClaimTemplates |
+| ตั้งค่า / ความลับ             | `.env`                    | ConfigMap / Secret         |
+| เพิ่มจำนวน instance           | `deploy.replicas`         | `spec.replicas` + HPA      |
 
 เข้าใจตารางนี้ = เข้าใจ 70% ของการย้ายจาก Compose ไป K8s
 
