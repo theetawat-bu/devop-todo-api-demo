@@ -13,7 +13,7 @@ type Config struct {
 	AppVersion  string
 }
 
-// Load อ่านค่าจาก env แล้วโยน error ทันทีถ้าไม่มี DATABASE_URL
+// Load อ่านค่าจาก env แล้วโยน error ทันทีถ้าไม่มี DATABASE_URL xxx
 // pattern นี้เรียกว่า fail fast — แอปตายตั้งแต่ boot ดีกว่าไปตายตอนมี request จริง
 // (บน k8s pod จะเข้า CrashLoopBackOff ให้เห็นเลยว่าตั้งค่าผิด)
 func Load() (Config, error) {
